@@ -32,7 +32,8 @@ export default function RegisterPage() {
         localStorage.setItem('token', res.data.token);
         localStorage.setItem('user', JSON.stringify(res.data.user));
         const role = res.data.user?.role;
-        router.push(role === 'admin' ? '/admin' : '/inspeksi');
+        const adminLikeRoles = ['admin', 'qc', 'kupt'];
+        router.push(adminLikeRoles.includes(role) ? '/admin' : '/inspeksi');
       }
     } catch (err: any) {
       setError(err.response?.data?.message || 'Gagal registrasi. Silakan coba lagi.');

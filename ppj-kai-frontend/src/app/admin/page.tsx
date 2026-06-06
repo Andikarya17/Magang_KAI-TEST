@@ -40,6 +40,15 @@ interface Petugas { id: number; nipp: string; nama: string; tugasPpj: { id: numb
 interface Tugas { id: number; jalur: string; tanggal: string; startPointLat: number; startPointLong: number; endPointLat: number; endPointLong: number; startPointName: string; endPointName: string; status: string; user: { nama: string; nipp: string }, tracking?: { startTime: string, endTime: string, durasi: number, status: string, laporan: Emergency[] }[] }
 interface Emergency { id: number; latitude: number; longitude: number; jenisTemuan: string; deskripsi: string; foto: string | null; createdAt: string; tracking?: { tugas: { jalur: string; user: { nama: string; nipp: string } } } }
 interface Stats { totalPetugas: number; tugasAktif: number; tugasSelesai: number; laporanDarurat: number }
+interface ManagedUser { id: number; nipp: string; nama: string; role: string; isActive: boolean; jabatan?: string; division?: string; workArea?: string; phone?: string; managerId?: number; createdAt: string; wilayahAssignments: { id: number; wilayah: { id: number; kode: string; nama: string; stations: string } }[] }
+interface WilayahItem { id: number; kode: string; nama: string; stations: string }
+
+const ROLE_BADGE: Record<string, { label: string; bg: string }> = {
+  admin: { label: 'Super Admin', bg: 'bg-slate-800' },
+  qc: { label: 'Quality Control', bg: 'bg-indigo-600' },
+  kupt: { label: 'KUPT', bg: 'bg-teal-600' },
+};
+const ROLE_LABEL: Record<string, string> = { admin: 'Admin', qc: 'QC', kupt: 'KUPT', ppj: 'PPJ' };
 
 const STATUS_COLOR: Record<string, string> = { pending: 'bg-surface-container text-on-surface-variant border-outline-variant', in_progress: 'bg-primary-container/20 text-primary border-primary/30', completed: 'bg-primary-fixed text-on-primary-fixed-variant border-transparent' };
 const STATUS_LABEL: Record<string, string> = { pending: 'Pending', in_progress: 'Berlangsung', completed: 'Selesai' };
@@ -53,7 +62,7 @@ const JENIS_COLOR: Record<string, string> = {
 
 export default function AdminPage() {
   const router = useRouter();
-  const [user, setUser] = useState<{ nama: string } | null>(null);
+  const [user, setUser] = useState<{ nama: string; role: string } | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [petugas, setPetugas] = useState<Petugas[]>([]);
   const [tugas, setTugas] = useState<Tugas[]>([]);
@@ -63,7 +72,27 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<'map' | 'tasks' | 'emergency'>('map');
 
   // Sidebar menu state
-  const [activeMenu, setActiveMenu] = useState<'penugasan' | 'liveview'>('penugasan');
+  const [activeMenu, setActiveMenu] = useState<'penugasan' | 'liveview' | 'akun'>('penugasan');
+
+  // Role-derived permissions
+  const userRole = user?.role || 'admin';
+  const canWrite = userRole === 'admin' || userRole === 'kupt';
+  const isAdmin = userRole === 'admin';
+
+  // User wilayah stations (for KUPT station filtering)
+  const [userStations, setUserStations] = useState<string[]>([]);
+  const filteredStations = canWrite && !isAdmin && userStations.length > 0
+    ? STATIONS.filter(s => userStations.includes(s.name))
+    : STATIONS;
+
+  // Account management state (admin only)
+  const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
+  const [allWilayah, setAllWilayah] = useState<WilayahItem[]>([]);
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
+  const [userForm, setUserForm] = useState({ nipp: '', nama: '', password: '', role: 'ppj' as string, wilayahIds: [] as number[] });
+  const [savingUser, setSavingUser] = useState(false);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
 
   // Task form state
   const [form, setForm] = useState({ jalur: '', tanggal: '', assignedTo: '', startPointName: '', endPointName: '', startPointLat: '', startPointLong: '', endPointLat: '', endPointLong: '', jamMulai: '', jamSelesai: '' });
@@ -99,9 +128,33 @@ export default function AdminPage() {
     } catch (e) { console.error(e); }
   }, []);
 
+  const fetchUsers = useCallback(async () => {
+    try {
+      const [usersRes, wilayahRes] = await Promise.all([
+        api.get('/admin/users'), api.get('/admin/wilayah'),
+      ]);
+      setManagedUsers(usersRes.data.data);
+      setAllWilayah(wilayahRes.data.data);
+    } catch (e) { console.error(e); }
+  }, []);
+
   useEffect(() => {
     const userStr = localStorage.getItem('user');
-    if (userStr) setUser(JSON.parse(userStr));
+    if (userStr) {
+      const parsed = JSON.parse(userStr);
+      setUser(parsed);
+    }
+    // Fetch user profile for wilayah info
+    api.get('/auth/me').then(res => {
+      const me = res.data.user;
+      if (me?.wilayahAssignments) {
+        const stationNames: string[] = [];
+        for (const wa of me.wilayahAssignments) {
+          try { stationNames.push(...JSON.parse(wa.wilayah.stations)); } catch {}
+        }
+        setUserStations(stationNames);
+      }
+    }).catch(() => {});
     fetchAll();
     const interval = setInterval(fetchAll, 15000);
     return () => clearInterval(interval);
@@ -212,7 +265,7 @@ export default function AdminPage() {
           <img src="/logo-kai.png" alt="KAI Logo" className="h-8 w-auto object-contain" />
           <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
           <h1 className="font-h3 text-lg font-extrabold text-slate-800 tracking-tight hidden sm:block">Command Center <span className="text-primary">PPJ</span></h1>
-          <span className="ml-2 px-2 py-0.5 bg-slate-800 text-white font-label-sm text-[10px] rounded uppercase font-bold tracking-widest shadow-sm">Portal Admin</span>
+          <span className={`ml-2 px-2 py-0.5 text-white font-label-sm text-[10px] rounded uppercase font-bold tracking-widest shadow-sm ${ROLE_BADGE[userRole]?.bg || 'bg-slate-800'}`}>{ROLE_BADGE[userRole]?.label || 'Portal Admin'}</span>
         </div>
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-3">
@@ -259,6 +312,20 @@ export default function AdminPage() {
             <span className="material-symbols-outlined text-[22px]">map</span>
             <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Live</span>
           </button>
+          {isAdmin && (
+            <button
+              onClick={() => { setActiveMenu('akun'); fetchUsers(); }}
+              className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
+                activeMenu === 'akun'
+                  ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                  : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+              }`}
+              title="Kelola Akun"
+            >
+              <span className="material-symbols-outlined text-[22px]">manage_accounts</span>
+              <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Akun</span>
+            </button>
+          )}
         </nav>
 
         {/* ── PENUGASAN VIEW ──────────────────────────────────── */}
@@ -333,13 +400,15 @@ export default function AdminPage() {
                               <div className={`w-1.5 h-1.5 rounded-full ${aktif ? 'bg-blue-500 animate-pulse' : 'bg-slate-400'}`}></div>
                               <span className="text-[10px] font-bold uppercase tracking-widest">{aktif ? 'Patroli' : 'Standby'}</span>
                             </div>
-                            {/* Remove button (shows on hover) */}
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); handleRemovePetugas(p.id); }} 
-                              className="absolute -top-2 -right-2 w-7 h-7 bg-white border border-slate-200 rounded-full text-slate-400 hover:text-rose-600 hover:border-rose-300 shadow-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all z-10"
-                            >
-                              <span className="material-symbols-outlined text-[16px]">delete</span>
-                            </button>
+                            {/* Remove button (shows on hover) — only for admin/kupt */}
+                            {canWrite && (
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); handleRemovePetugas(p.id); }} 
+                                className="absolute -top-2 -right-2 w-7 h-7 bg-white border border-slate-200 rounded-full text-slate-400 hover:text-rose-600 hover:border-rose-300 shadow-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all z-10"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">delete</span>
+                              </button>
+                            )}
                           </div>
                         );
                       })}
@@ -354,9 +423,11 @@ export default function AdminPage() {
                         <div key={t.id} className="bg-slate-50 rounded-xl p-4 border border-slate-200">
                           <div className="flex justify-between items-start gap-2 mb-1">
                             <p className="font-bold text-slate-800 text-sm leading-snug">{t.jalur}</p>
-                            <button onClick={() => handleDeleteTugas(t.id)} className="text-slate-400 hover:text-rose-600 transition-colors p-1 rounded hover:bg-rose-100 shrink-0">
-                              <span className="material-symbols-outlined text-[16px]">delete</span>
-                            </button>
+                            {canWrite && (
+                              <button onClick={() => handleDeleteTugas(t.id)} className="text-slate-400 hover:text-rose-600 transition-colors p-1 rounded hover:bg-rose-100 shrink-0">
+                                <span className="material-symbols-outlined text-[16px]">delete</span>
+                              </button>
+                            )}
                           </div>
                           <p className="text-xs text-primary font-semibold mb-3">{t.user?.nama}</p>
                           <div className="flex items-center justify-between border-t border-slate-200 pt-3">
@@ -396,15 +467,15 @@ export default function AdminPage() {
                   )}
                 </div>
                 
-                {/* Action Buttons (Docked) */}
-                {activeTab === 'tasks' && (
+                {/* Action Buttons (Docked) — only for admin/kupt */}
+                {canWrite && activeTab === 'tasks' && (
                   <div className="p-3 border-t border-slate-200 bg-slate-50 shrink-0">
                     <button onClick={() => setShowTaskModal(true)} className="w-full py-2.5 bg-primary text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-primary/90 shadow-sm transition-all active:scale-[0.98]">
                       <span className="material-symbols-outlined text-[18px]">add</span> Tugaskan Pemeriksa
                     </button>
                   </div>
                 )}
-                {activeTab === 'map' && (
+                {canWrite && activeTab === 'map' && (
                   <div className="p-3 border-t border-slate-200 bg-slate-50 shrink-0">
                     <button onClick={() => { setShowAddPetugasModal(true); fetchAvailablePetugas(); setSelectedNipps([]); setSearchPetugas(''); }} className="w-full py-2.5 bg-white border border-primary text-primary rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-primary/5 shadow-sm transition-all active:scale-[0.98]">
                       <span className="material-symbols-outlined text-[18px]">person_add</span> Tambah Petugas Kelolaan
@@ -506,7 +577,184 @@ export default function AdminPage() {
             </div>
           </main>
         )}
+
+        {/* ── AKUN MANAGEMENT VIEW (Admin Only) ────────────── */}
+        {activeMenu === 'akun' && isAdmin && (
+          <div className="flex flex-1 overflow-hidden p-4 gap-4">
+            <div className="flex-1 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+              {/* Header */}
+              <div className="p-6 border-b border-slate-200 flex items-center justify-between shrink-0">
+                <div>
+                  <h2 className="text-lg font-extrabold text-slate-800 tracking-tight">Kelola Akun Pengguna</h2>
+                  <p className="text-sm text-slate-500 mt-0.5">Buat, edit, dan kelola akun QC, KUPT, dan PPJ</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
+                    <input
+                      value={userSearchQuery}
+                      onChange={e => setUserSearchQuery(e.target.value)}
+                      placeholder="Cari NIPP atau nama..."
+                      className="pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none w-56 font-medium"
+                    />
+                  </div>
+                  <button onClick={handleOpenCreateUser} className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-primary/90 shadow-sm transition-all active:scale-[0.98]">
+                    <span className="material-symbols-outlined text-[18px]">person_add</span> Buat Akun
+                  </button>
+                </div>
+              </div>
+
+              {/* User List */}
+              <div className="flex-1 overflow-y-auto p-4">
+                {managedUsers.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-center">
+                    <span className="material-symbols-outlined text-slate-200 text-6xl mb-4">group</span>
+                    <p className="text-slate-500 font-medium">Belum ada akun yang dibuat.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {managedUsers
+                      .filter(u => {
+                        if (!userSearchQuery) return true;
+                        const q = userSearchQuery.toLowerCase();
+                        return u.nipp.toLowerCase().includes(q) || u.nama.toLowerCase().includes(q);
+                      })
+                      .map(u => (
+                        <div key={u.id} className={`bg-slate-50 rounded-2xl border p-5 relative group transition-all ${
+                          u.isActive ? 'border-slate-200 hover:border-primary/30' : 'border-rose-200 bg-rose-50/50 opacity-70'
+                        }`}>
+                          <div className="flex items-start gap-3 mb-3">
+                            <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm text-white shadow-inner shrink-0" style={{ background: petugasColor(u.nipp) }}>
+                              {u.nama.substring(0, 2).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-bold text-slate-800 text-sm truncate">{u.nama}</p>
+                              <p className="text-xs text-slate-500 font-medium">{u.nipp}</p>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                              u.role === 'qc' ? 'bg-indigo-100 text-indigo-700' :
+                              u.role === 'kupt' ? 'bg-teal-100 text-teal-700' :
+                              'bg-slate-100 text-slate-700'
+                            }`}>{ROLE_LABEL[u.role] || u.role}</span>
+                          </div>
+                          {u.wilayahAssignments.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mb-3">
+                              {u.wilayahAssignments.map(wa => (
+                                <span key={wa.id} className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[10px] text-slate-600 font-semibold">
+                                  {wa.wilayah.kode} {wa.wilayah.nama}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex items-center gap-2 pt-3 border-t border-slate-200">
+                            <span className={`flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest ${
+                              u.isActive ? 'text-emerald-600' : 'text-rose-600'
+                            }`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${u.isActive ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
+                              {u.isActive ? 'Aktif' : 'Nonaktif'}
+                            </span>
+                            <span className="flex-1"></span>
+                            <button onClick={() => handleOpenEditUser(u)} className="text-slate-400 hover:text-primary transition-colors p-1 rounded hover:bg-primary/5">
+                              <span className="material-symbols-outlined text-[18px]">edit</span>
+                            </button>
+                            <button onClick={() => handleToggleUserActive(u)} className={`transition-colors p-1 rounded ${u.isActive ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'}`}>
+                              <span className="material-symbols-outlined text-[18px]">{u.isActive ? 'person_off' : 'person'}</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Create/Edit User Modal (Admin Only) */}
+      {showUserModal && isAdmin && (
+        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-slate-800 px-6 py-4 flex items-center justify-between shrink-0">
+              <h3 className="text-base font-bold text-white flex items-center gap-3 tracking-wide">
+                <span className="material-symbols-outlined text-primary text-[20px]">{editingUser ? 'edit' : 'person_add'}</span>
+                {editingUser ? 'EDIT AKUN' : 'BUAT AKUN BARU'}
+              </h3>
+              <button onClick={() => setShowUserModal(false)} className="text-slate-400 hover:text-white transition-colors"><span className="material-symbols-outlined">close</span></button>
+            </div>
+            <div className="overflow-y-auto p-6 space-y-5 flex-1 bg-slate-50/50">
+              {/* NIPP */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">NIPP</label>
+                <input value={userForm.nipp} onChange={e => setUserForm(f => ({ ...f, nipp: e.target.value }))} disabled={!!editingUser} placeholder="Contoh: QC-A001" className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium disabled:bg-slate-100 disabled:text-slate-400" />
+              </div>
+              {/* Nama */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Nama Lengkap</label>
+                <input value={userForm.nama} onChange={e => setUserForm(f => ({ ...f, nama: e.target.value }))} placeholder="Nama pengguna" className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium" />
+              </div>
+              {/* Password */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">{editingUser ? 'Password Baru (opsional)' : 'Password'}</label>
+                <input type="password" value={userForm.password} onChange={e => setUserForm(f => ({ ...f, password: e.target.value }))} placeholder={editingUser ? 'Kosongkan jika tidak diubah' : 'Min. 6 karakter'} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium" />
+              </div>
+              {/* Role */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Role</label>
+                <select value={userForm.role} onChange={e => setUserForm(f => ({ ...f, role: e.target.value, wilayahIds: [] }))} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium">
+                  <option value="ppj">PPJ (Petugas Pemeriksa Jalur)</option>
+                  <option value="qc">QC (Quality Control)</option>
+                  <option value="kupt">KUPT</option>
+                </select>
+              </div>
+              {/* Wilayah (for QC/KUPT) */}
+              {(userForm.role === 'qc' || userForm.role === 'kupt') && (
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">
+                    Wilayah {userForm.role === 'kupt' ? '(Pilih 1)' : '(Pilih beberapa)'}
+                  </label>
+                  <div className="border border-slate-300 rounded-xl bg-white p-3 max-h-48 overflow-y-auto space-y-2">
+                    {allWilayah.map(w => {
+                      const checked = userForm.wilayahIds.includes(w.id);
+                      return (
+                        <label key={w.id} className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${checked ? 'bg-primary/5 border border-primary/20' : 'hover:bg-slate-50 border border-transparent'}`}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setUserForm(f => {
+                                if (f.role === 'kupt') {
+                                  return { ...f, wilayahIds: checked ? [] : [w.id] };
+                                }
+                                return { ...f, wilayahIds: checked ? f.wilayahIds.filter(id => id !== w.id) : [...f.wilayahIds, w.id] };
+                              });
+                            }}
+                            className="rounded border-slate-300 text-primary focus:ring-primary"
+                          />
+                          <div className="flex-1">
+                            <span className="text-sm font-semibold text-slate-800">{w.kode}</span>
+                            <span className="text-xs text-slate-500 ml-2">{w.nama}</span>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {userForm.wilayahIds.length > 0 && (
+                    <p className="text-xs text-primary font-semibold mt-2">{userForm.wilayahIds.length} wilayah dipilih</p>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="p-5 border-t border-slate-200 flex gap-3 shrink-0 bg-white">
+              <button onClick={() => setShowUserModal(false)} className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">Batal</button>
+              <button onClick={handleSaveUser} disabled={savingUser} className="flex-[2] py-3 rounded-xl bg-primary text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-primary/20 hover:bg-primary/90 disabled:opacity-60 transition-all active:scale-[0.98] uppercase tracking-wider">
+                <span className="material-symbols-outlined text-[18px]">save</span>
+                {savingUser ? 'Menyimpan...' : (editingUser ? 'Simpan Perubahan' : 'Buat Akun')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Emergency Detail Modal */}
       {selectedEmergency && (
@@ -585,12 +833,13 @@ export default function AdminPage() {
                       className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none shadow-sm font-medium"
                     >
                       <option value="">-- Pilih Stasiun Awal --</option>
-                      {STATIONS.map(s => (
+                      {filteredStations.map(s => (
                         <option key={s.name} value={s.name}>
                           {s.name} ({s.lat.toFixed(4)}, {s.lng.toFixed(4)})
                         </option>
                       ))}
                     </select>
+
                     {form.startPointLat && (
                       <div className="flex items-center gap-1.5 text-[10px] text-emerald-600 font-semibold bg-emerald-50 rounded-lg px-3 py-1.5 border border-emerald-100">
                         <span className="material-symbols-outlined text-[14px]">check_circle</span>
@@ -609,7 +858,7 @@ export default function AdminPage() {
                       className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none shadow-sm font-medium"
                     >
                       <option value="">-- Pilih Stasiun Akhir --</option>
-                      {STATIONS.map(s => (
+                      {filteredStations.map(s => (
                         <option key={s.name} value={s.name}>
                           {s.name} ({s.lat.toFixed(4)}, {s.lng.toFixed(4)})
                         </option>

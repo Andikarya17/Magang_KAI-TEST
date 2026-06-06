@@ -3,9 +3,11 @@
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 
-const PUBLIC_ROUTES = ['/login', '/register'];
+const PUBLIC_ROUTES = ['/login', '/register', '/guest'];
 const ADMIN_ROUTES = ['/admin'];
-const PETUGAS_ROUTES = ['/inspeksi'];
+const PPJ_ROUTES = ['/inspeksi'];
+
+const ADMIN_LIKE_ROLES = ['admin', 'qc', 'kupt'];
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -17,28 +19,35 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
     const token = localStorage.getItem('token');
     const userStr = localStorage.getItem('user');
-    const role = userStr ? (JSON.parse(userStr)?.role ?? 'petugas') : null;
+    const role = userStr ? (JSON.parse(userStr)?.role ?? 'ppj') : null;
 
-    const isPublic = PUBLIC_ROUTES.includes(pathname);
+    const isPublic = PUBLIC_ROUTES.some(r => pathname === r || pathname.startsWith(r + '/'));
     const isAdminRoute = ADMIN_ROUTES.some(r => pathname.startsWith(r));
-    const isPetugasRoute = PETUGAS_ROUTES.some(r => pathname.startsWith(r));
+    const isPpjRoute = PPJ_ROUTES.some(r => pathname.startsWith(r));
+    const isGuestRoute = pathname === '/guest' || pathname.startsWith('/guest/');
+
+    // Guest route is public — always allow without token
+    if (isGuestRoute) {
+      setReady(true);
+      return;
+    }
 
     if (!token) {
-      // Not logged in — redirect to login unless already there
+      // Not logged in — redirect to login unless on a public route
       if (!isPublic) {
         router.replace('/login');
         return;
       }
-    } else if (isPublic) {
-      // Already logged in — redirect away from login
-      router.replace(role === 'admin' ? '/admin' : '/inspeksi');
+    } else if (pathname === '/login' || pathname === '/register') {
+      // Already logged in — redirect away from login/register
+      router.replace(ADMIN_LIKE_ROLES.includes(role) ? '/admin' : '/inspeksi');
       return;
-    } else if (isAdminRoute && role !== 'admin') {
-      // Petugas trying to access admin
+    } else if (isAdminRoute && !ADMIN_LIKE_ROLES.includes(role)) {
+      // PPJ trying to access admin → redirect to inspeksi
       router.replace('/inspeksi');
       return;
-    } else if (isPetugasRoute && role === 'admin') {
-      // Admin trying to access petugas routes
+    } else if (isPpjRoute && ADMIN_LIKE_ROLES.includes(role)) {
+      // Admin-like trying to access PPJ routes → redirect to admin
       router.replace('/admin');
       return;
     }
@@ -46,7 +55,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     setReady(true);
   }, [pathname, router]);
 
-  if (!ready && !PUBLIC_ROUTES.includes(pathname)) {
+  if (!ready && !PUBLIC_ROUTES.some(r => pathname === r || pathname.startsWith(r + '/'))) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-surface">
         <div className="flex flex-col items-center gap-md text-on-surface-variant">
