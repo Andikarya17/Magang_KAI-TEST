@@ -46,12 +46,41 @@ interface Emergency {
   };
 }
 
+interface LivePosition {
+  petugasNama: string;
+  petugasNipp: string;
+  tugasId: number;
+  jalur: string;
+  latitude: number;
+  longitude: number;
+  updatedAt: string;
+}
+
 interface Stats {
   totalPetugas: number;
   tugasAktif: number;
   tugasSelesai: number;
   laporanDarurat: number;
 }
+
+// ─── Station Data (for maxBounds calculation) ────────────────────────────────
+const STATIONS = [
+  { name: 'Sta. Maguwo', lat: -7.785040, lng: 110.436899 },
+  { name: 'Sta. Lempuyangan', lat: -7.789961, lng: 110.375275 },
+  { name: 'Sta. Yogyakarta', lat: -7.788870, lng: 110.363213 },
+  { name: 'Sta. Patukan', lat: -7.790771, lng: 110.325332 },
+  { name: 'Sta. Wojo', lat: -7.862278, lng: 110.041092 },
+  { name: 'Sta. Jenar', lat: -7.802037, lng: 110.000797 },
+  { name: 'Sta. Wates', lat: -7.859248, lng: 110.158247 },
+  { name: 'Sta. Brambanan', lat: -7.756641, lng: 110.500415 },
+  { name: 'Sta. Klaten', lat: -7.712576, lng: 110.602980 },
+  { name: 'Sta. Delanggu', lat: -7.622398, lng: 110.706588 },
+  { name: 'Sta. Solo Balapan', lat: -7.557184, lng: 110.819394 },
+  { name: 'Sta. Wonogiri', lat: -7.815882, lng: 110.921733 },
+  { name: 'Sta. Sumberlawang', lat: -7.327810, lng: 110.863565 },
+  { name: 'Sta. Palur', lat: -7.568030, lng: 110.875387 },
+  { name: 'Sta. Sragen', lat: -7.429623, lng: 111.016701 },
+] as const;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -94,6 +123,7 @@ export default function QCPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [tugas, setTugas] = useState<Tugas[]>([]);
   const [emergencies, setEmergencies] = useState<Emergency[]>([]);
+  const [livePositions, setLivePositions] = useState<LivePosition[]>([]);
   const [selectedJalur, setSelectedJalur] = useState<string>('__all__');
   const [selectedEmergency, setSelectedEmergency] = useState<Emergency | null>(null);
   const [loading, setLoading] = useState(true);
@@ -101,16 +131,18 @@ export default function QCPage() {
   // ─── Data Fetching ──────────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
     try {
-      const [statsRes, tugasRes, emRes, meRes] = await Promise.all([
+      const [statsRes, tugasRes, emRes, meRes, liveRes] = await Promise.all([
         api.get('/admin/stats'),
         api.get('/admin/tugas'),
         api.get('/admin/emergency'),
         api.get('/auth/me'),
+        api.get('/admin/live-positions'),
       ]);
       setStats(statsRes.data.data);
       setTugas(tugasRes.data.data);
       setEmergencies(emRes.data.data);
       setUser(meRes.data.user);
+      setLivePositions(liveRes.data.data);
     } catch (e) {
       console.error('QC fetch error:', e);
     } finally {
@@ -190,6 +222,50 @@ export default function QCPage() {
     petugasNipp: t.user?.nipp,
   }));
 
+  // Filter live positions by selected wilayah
+  const filteredLivePositions = useMemo(() => {
+    if (selectedJalur === '__all__') return livePositions;
+    const selectedWilayah = wilayahList.find(w => w.kode === selectedJalur);
+    if (!selectedWilayah) return livePositions;
+    return livePositions.filter(p =>
+      selectedWilayah.stations.some(s => p.jalur.includes(s))
+    );
+  }, [livePositions, selectedJalur, wilayahList]);
+
+  // Compute maxBounds from QC's wilayah stations
+  const maxBounds = useMemo<[[number, number], [number, number]] | undefined>(() => {
+    if (!user?.wilayahAssignments || user.wilayahAssignments.length === 0) return undefined;
+    
+    let targetStations: string[] = [];
+    if (selectedJalur === '__all__') {
+      // Collect all station names from all wilayah assignments
+      for (const a of user.wilayahAssignments) {
+        try {
+          const parsed = JSON.parse(a.wilayah.stations || '[]') as string[];
+          targetStations.push(...parsed);
+        } catch { /* skip */ }
+      }
+    } else {
+      const selectedWilayah = wilayahList.find(w => w.kode === selectedJalur);
+      if (selectedWilayah) {
+        targetStations = selectedWilayah.stations;
+      }
+    }
+
+    if (targetStations.length === 0) return undefined;
+    // Match station names to coordinates
+    const matchedStations = STATIONS.filter(s => targetStations.includes(s.name));
+    if (matchedStations.length === 0) return undefined;
+    // Compute bounding box with padding
+    const PAD = 0.04; // ~4.4 km padding
+    const lats = matchedStations.map(s => s.lat);
+    const lngs = matchedStations.map(s => s.lng);
+    return [
+      [Math.min(...lats) - PAD, Math.min(...lngs) - PAD],
+      [Math.max(...lats) + PAD, Math.max(...lngs) + PAD],
+    ];
+  }, [user, selectedJalur, wilayahList]);
+
   // Stats summary for active filtered view
   const filteredStats = useMemo(() => {
     const aktif = filteredTugas.filter(t => t.status === 'in_progress').length;
@@ -246,6 +322,8 @@ export default function QCPage() {
         <AdminMap
           emergencies={mapEmergencies}
           tasks={mapTasks}
+          livePositions={filteredLivePositions}
+          maxBounds={maxBounds}
           onEmergencyClick={(em) => {
             setSelectedEmergency(emergencies.find(e => e.id === em.id) || null);
           }}
@@ -358,6 +436,12 @@ export default function QCPage() {
             <div className="flex items-center gap-2 mt-1 pt-2 border-t border-slate-100">
               <span className="text-rose-500 font-bold text-[14px] leading-none w-3 text-center">⚠</span>
               <span className="text-slate-700 text-[11px] font-semibold">Laporan Darurat</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-indigo-500 shadow-sm relative">
+                <div className="absolute inset-0 rounded-full bg-indigo-400 animate-ping opacity-40"></div>
+              </div>
+              <span className="text-slate-700 text-[11px] font-semibold">Posisi Petugas (Live)</span>
             </div>
           </div>
         </div>

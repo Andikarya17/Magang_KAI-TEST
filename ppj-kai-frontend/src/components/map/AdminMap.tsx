@@ -31,10 +31,24 @@ interface TaskPoint {
   petugasNipp?: string;
 }
 
+interface LivePosition {
+  petugasNama: string;
+  petugasNipp: string;
+  tugasId: number;
+  jalur: string;
+  latitude: number;
+  longitude: number;
+  updatedAt: string;
+}
+
 interface AdminMapProps {
   emergencies: EmergencyPoint[];
   tasks: TaskPoint[];
   onEmergencyClick?: (e: EmergencyPoint) => void;
+  /** Live petugas positions — shown as pulsing dots on the map */
+  livePositions?: LivePosition[];
+  /** If provided, locks the map to this bounding box */
+  maxBounds?: [[number, number], [number, number]];
 }
 
 // Keep for sidebar status badges
@@ -74,25 +88,55 @@ function makePin(color: string, label: string) {
 // fetchRailwayGeometry is imported from lib/railway.ts
 // which has automatic failover to multiple Overpass API mirrors
 
-export default function AdminMap({ emergencies, tasks, onEmergencyClick }: AdminMapProps) {
+export default function AdminMap({ emergencies, tasks, onEmergencyClick, livePositions, maxBounds }: AdminMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
+  const liveLayerRef = useRef<L.LayerGroup | null>(null);
+  const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     mapRef.current = L.map(containerRef.current, { zoomControl: true, attributionControl: false }).setView([-7.6, 110.4], 10);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapRef.current);
     layerGroupRef.current = L.layerGroup().addTo(mapRef.current);
-    return () => { mapRef.current?.remove(); mapRef.current = null; };
+    liveLayerRef.current = L.layerGroup().addTo(mapRef.current);
+    setMapReady(true);
+    return () => {
+      mapRef.current?.remove();
+      mapRef.current = null;
+      setMapReady(false);
+    };
   }, []);
+
+  // Apply/update maxBounds when map is ready and bounds change
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return;
+
+    // Reset bounds restriction and min zoom first to allow map to zoom out/in freely
+    mapRef.current.setMinZoom(0);
+    mapRef.current.setMaxBounds(null as any);
+
+    if (maxBounds) {
+      const bounds = L.latLngBounds(
+        L.latLng(maxBounds[0][0], maxBounds[0][1]),
+        L.latLng(maxBounds[1][0], maxBounds[1][1])
+      );
+      mapRef.current.fitBounds(bounds, { padding: [20, 20] });
+      mapRef.current.setMaxBounds(bounds);
+      
+      // Calculate and set the min zoom level based on the fitted bounds
+      const currentZoom = mapRef.current.getZoom();
+      mapRef.current.setMinZoom(Math.max(0, currentZoom - 1));
+    }
+  }, [maxBounds, mapReady]);
 
   // Geometry cache — persists across re-renders, keyed by task coordinates
   const geometryCacheRef = useRef<Map<string, [number, number][][]>>(new Map());
 
   // Draw task routes + emergency markers
   useEffect(() => {
-    if (!mapRef.current || !layerGroupRef.current) return;
+    if (!mapRef.current || !layerGroupRef.current || !mapReady) return;
     layerGroupRef.current.clearLayers();
 
     // Draw markers immediately, then load real railway geometry per task async
@@ -158,7 +202,41 @@ export default function AdminMap({ emergencies, tasks, onEmergencyClick }: Admin
         .bindTooltip(`<b>⚠ ${em.jenisTemuan}</b><br><span style="font-size:11px">${em.petugasNama || ''}</span>`)
         .addTo(layerGroupRef.current!);
     });
-  }, [emergencies, tasks]);
+  }, [emergencies, tasks, mapReady]);
+
+  // Draw live petugas position markers (separate layer for independent updates)
+  useEffect(() => {
+    if (!mapRef.current || !liveLayerRef.current || !mapReady) return;
+    liveLayerRef.current.clearLayers();
+
+    if (!livePositions || livePositions.length === 0) return;
+
+    livePositions.forEach(pos => {
+      const color = petugasColor(pos.petugasNipp);
+      const initials = pos.petugasNama.substring(0, 2).toUpperCase();
+
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="position:relative;display:flex;align-items:center;justify-content:center;">
+          <div style="position:absolute;width:40px;height:40px;background:${color}33;border-radius:50%;animation:livePulse 2s ease-in-out infinite"></div>
+          <div style="width:24px;height:24px;background:${color};border:3px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;z-index:10;font-size:9px;font-weight:bold;color:white;box-shadow:0 2px 8px rgba(0,0,0,0.35)">${initials}</div>
+        </div><style>@keyframes livePulse{0%,100%{transform:scale(1);opacity:0.6}50%{transform:scale(1.5);opacity:0}}</style>`,
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+      });
+
+      L.marker([pos.latitude, pos.longitude], { icon, zIndexOffset: 1000 })
+        .bindTooltip(
+          `<div style="text-align:center">
+            <b style="color:${color}">${pos.petugasNama}</b><br>
+            <span style="font-size:10px;color:#64748b">${pos.jalur}</span><br>
+            <span style="font-size:9px;color:#94a3b8">🕐 ${new Date(pos.updatedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+          </div>`,
+          { direction: 'top', offset: [0, -24] }
+        )
+        .addTo(liveLayerRef.current!);
+    });
+  }, [livePositions, mapReady]);
 
   return (
     <div className="w-full h-full relative">

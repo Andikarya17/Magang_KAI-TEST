@@ -3,7 +3,7 @@ import { requireAuth, requireAdmin, requireAdminLike, requireCanWrite } from '..
 import {
   getStats, getAllPetugas, getAvailablePetugas, addPetugasToManager,
   removePetugasFromManager, getAllTugas, createTugas, deleteTugas, getAllEmergency,
-  getAllUsers, createUser, updateUser, deleteUser, getAllWilayah,
+  getAllUsers, createUser, updateUser, deleteUser, getAllWilayah, getLivePositions,
 } from '../controllers/admin.controller';
 
 const router = Router();
@@ -13,6 +13,7 @@ router.get('/stats', requireAuth, requireAdminLike, getStats);
 router.get('/petugas', requireAuth, requireAdminLike, getAllPetugas);
 router.get('/tugas', requireAuth, requireAdminLike, getAllTugas);
 router.get('/emergency', requireAuth, requireAdminLike, getAllEmergency);
+router.get('/live-positions', requireAuth, requireAdminLike, getLivePositions);
 
 // ── Write endpoints — admin + kupt only ──
 router.get('/petugas/available', requireAuth, requireCanWrite, getAvailablePetugas);

@@ -217,9 +217,22 @@ export default function LoginPage() {
               >
                 {isLoading ? 'Memverifikasi...' : 'Masuk'} <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
               </button>
+
+              <div className="flex items-center my-1">
+                <div className="flex-1 h-px bg-outline-variant/60"></div>
+                <span className="px-3 font-label-sm text-[10px] text-outline uppercase tracking-wider">Atau</span>
+                <div className="flex-1 h-px bg-outline-variant/60"></div>
+              </div>
+
+              <Link
+                href="/guest"
+                className="w-full h-12 border border-primary text-primary rounded-xl font-label-sm text-label-sm hover:bg-primary/5 active:scale-[0.98] transition-all flex items-center justify-center gap-2 uppercase tracking-wider font-semibold"
+              >
+                <span className="material-symbols-outlined text-[18px]">visibility</span> Masuk Sebagai Guest
+              </Link>
+
               <p className="font-body-md text-body-md text-on-surface-variant text-center">
                 Belum ada akun? <Link className="text-primary font-semibold hover:underline" href="/register">Daftar Disini</Link>
-
               </p>
             </div>
           </form>

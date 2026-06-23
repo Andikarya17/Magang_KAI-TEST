@@ -401,6 +401,61 @@ export const getAllEmergency = async (req: AuthRequest, res: Response) => {
   }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /admin/live-positions
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getLivePositions = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const role = req.user!.role;
+    const stations = await getStationsForUser(userId, role);
+
+    const tugasFilter = role === 'qc'
+      ? buildStationFilter(stations)
+      : { user: { managerId: userId } };
+
+    // Find all active tracking sessions (not stopped) with their tugas + user
+    const activeTrackings = await prisma.tracking.findMany({
+      where: {
+        status: { not: 'stopped' },
+        endLat: { not: null },
+        endLong: { not: null },
+        tugas: tugasFilter,
+      },
+      select: {
+        endLat: true,
+        endLong: true,
+        updatedAt: true,
+        tugas: {
+          select: {
+            id: true,
+            jalur: true,
+            user: { select: { nama: true, nipp: true } },
+          },
+        },
+      },
+    });
+
+    const data = activeTrackings
+      .filter(t => t.endLat != null && t.endLong != null)
+      .map(t => ({
+        petugasNama: t.tugas.user.nama,
+        petugasNipp: t.tugas.user.nipp,
+        tugasId: t.tugas.id,
+        jalur: t.tugas.jalur,
+        latitude: t.endLat!,
+        longitude: t.endLong!,
+        updatedAt: t.updatedAt,
+      }));
+
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Get live positions error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
 // ═════════════════════════════════════════════════════════════════════════════
 // CRUD AKUN (Admin Only)
 // ═════════════════════════════════════════════════════════════════════════════
