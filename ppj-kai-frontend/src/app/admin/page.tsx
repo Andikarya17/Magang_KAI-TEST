@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import api from '../../lib/api';
 import { useRouter } from 'next/navigation';
+import { playNotification, NotificationSound } from '../../lib/audio';
 
 // Same deterministic color as AdminMap — NIPP → unique HSL color
 function petugasColor(nipp: string): string {
@@ -106,6 +107,41 @@ export default function AdminPage() {
   
   // History state
   const [selectedPetugasHistory, setSelectedPetugasHistory] = useState<Petugas | null>(null);
+
+  // Excel import state
+  const [importLoading, setImportLoading] = useState(false);
+  const [importResult, setImportResult] = useState<{ total: number; created: number; failed: number; details: { row: number; status: string; message: string; jalur?: string }[] } | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Audio Notification State
+  const [alertSound, setAlertSound] = useState<NotificationSound>('off');
+  const lastEmergencyId = React.useRef(0);
+
+  // Load alert sound preference
+  useEffect(() => {
+    const savedSound = localStorage.getItem('admin_alert_sound');
+    if (savedSound) {
+      setAlertSound(savedSound as NotificationSound);
+    }
+  }, []);
+
+  // Play sound on new emergency
+  useEffect(() => {
+    if (emergencies.length > 0) {
+      const latestId = Math.max(...emergencies.map(e => e.id));
+      if (lastEmergencyId.current > 0 && latestId > lastEmergencyId.current) {
+        playNotification(alertSound);
+      }
+      lastEmergencyId.current = Math.max(lastEmergencyId.current, latestId);
+    }
+  }, [emergencies, alertSound]);
+
+  const handleSoundChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const sound = e.target.value as NotificationSound;
+    setAlertSound(sound);
+    localStorage.setItem('admin_alert_sound', sound);
+    playNotification(sound); // Preview the sound
+  };
 
   const fetchAvailablePetugas = async () => {
     try {
@@ -299,6 +335,47 @@ export default function AdminPage() {
     }
   };
 
+  // Excel import/export handlers
+  const handleDownloadTemplate = async () => {
+    try {
+      const res = await api.get('/admin/tugas/template', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'template_penugasan_ppj.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert(e.response?.data?.message || 'Gagal mengunduh template.');
+    }
+  };
+
+  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Reset file input so the same file can be selected again
+    if (fileInputRef.current) fileInputRef.current.value = '';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      setImportLoading(true);
+      const res = await api.post('/admin/tugas/import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setImportResult(res.data.data);
+      fetchAll(); // Refresh task list
+    } catch (e: any) {
+      alert(e.response?.data?.message || 'Gagal mengimpor file.');
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
   const mapEmergencies = emergencies.map(e => ({ id: e.id, latitude: e.latitude, longitude: e.longitude, jenisTemuan: e.jenisTemuan, deskripsi: e.deskripsi, foto: e.foto, createdAt: e.createdAt, petugasNama: e.tracking?.tugas?.user?.nama, jalur: e.tracking?.tugas?.jalur }));
   const mapTasks = tugas.map(t => ({ id: t.id, jalur: t.jalur, startPointLat: t.startPointLat, startPointLong: t.startPointLong, endPointLat: t.endPointLat, endPointLong: t.endPointLong, startPointName: t.startPointName, endPointName: t.endPointName, status: t.status, petugasNama: t.user?.nama, petugasNipp: t.user?.nipp }));
 
@@ -313,6 +390,22 @@ export default function AdminPage() {
           <span className={`ml-2 px-2 py-0.5 text-white font-label-sm text-[10px] rounded uppercase font-bold tracking-widest shadow-sm ${ROLE_BADGE[userRole]?.bg || 'bg-slate-800'}`}>{ROLE_BADGE[userRole]?.label || 'Portal Admin'}</span>
         </div>
         <div className="flex items-center gap-6">
+          {/* Sound settings */}
+          <div className="flex items-center gap-2 mr-2">
+            <span className="material-symbols-outlined text-slate-400 text-[20px]">{alertSound === 'off' ? 'notifications_off' : 'notifications_active'}</span>
+            <select
+              value={alertSound}
+              onChange={handleSoundChange}
+              className="bg-slate-50 border border-slate-200 text-slate-600 font-medium text-[11px] rounded-lg px-2 py-1.5 focus:ring-primary focus:border-primary outline-none cursor-pointer"
+            >
+              <option value="off">Suara: Mati</option>
+              <option value="siren">Suara: Sirine</option>
+              <option value="beep">Suara: Beep</option>
+              <option value="chime">Suara: Lonceng</option>
+            </select>
+          </div>
+          <div className="w-px h-6 bg-slate-200"></div>
+          
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-primary-container text-primary rounded-full flex items-center justify-center font-bold text-sm border border-primary/20">
               {user?.nama?.substring(0, 2).toUpperCase() || 'AD'}
@@ -514,7 +607,33 @@ export default function AdminPage() {
                 
                 {/* Action Buttons (Docked) — only for admin/kupt */}
                 {canWrite && activeTab === 'tasks' && (
-                  <div className="p-3 border-t border-slate-200 bg-slate-50 shrink-0">
+                  <div className="p-3 border-t border-slate-200 bg-slate-50 shrink-0 space-y-2">
+                    {/* Excel Import/Export Row */}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleDownloadTemplate}
+                        className="flex-1 py-2 bg-white border border-emerald-300 text-emerald-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-emerald-50 shadow-sm transition-all active:scale-[0.98]"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">download</span>
+                        Template
+                      </button>
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={importLoading}
+                        className="flex-1 py-2 bg-white border border-blue-300 text-blue-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-blue-50 shadow-sm transition-all active:scale-[0.98] disabled:opacity-50"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">{importLoading ? 'hourglass_empty' : 'upload_file'}</span>
+                        {importLoading ? 'Importing...' : 'Import Excel'}
+                      </button>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".xlsx,.xls"
+                        onChange={handleImportExcel}
+                        className="hidden"
+                      />
+                    </div>
+                    {/* Create Single Task Button */}
                     <button onClick={() => setShowTaskModal(true)} className="w-full py-2.5 bg-primary text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-primary/90 shadow-sm transition-all active:scale-[0.98]">
                       <span className="material-symbols-outlined text-[18px]">add</span> Tugaskan Pemeriksa
                     </button>
@@ -1152,6 +1271,81 @@ export default function AdminPage() {
                   })
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Import Result Modal ──────────────────────────── */}
+      {importResult && (
+        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-slate-800 px-6 py-4 flex items-center justify-between shrink-0">
+              <h3 className="text-base font-bold text-white flex items-center gap-3 tracking-wide">
+                <span className="material-symbols-outlined text-emerald-400 text-[20px]">task_alt</span>
+                HASIL IMPORT EXCEL
+              </h3>
+              <button onClick={() => setImportResult(null)} className="text-slate-400 hover:text-white transition-colors flex items-center">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            {/* Summary */}
+            <div className="p-5 border-b border-slate-100 bg-slate-50/50">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-white rounded-xl p-3 border border-slate-200 text-center">
+                  <p className="text-2xl font-extrabold text-slate-800">{importResult.total}</p>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">Total Baris</p>
+                </div>
+                <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-200 text-center">
+                  <p className="text-2xl font-extrabold text-emerald-700">{importResult.created}</p>
+                  <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest mt-0.5">Berhasil</p>
+                </div>
+                <div className={`rounded-xl p-3 border text-center ${importResult.failed > 0 ? 'bg-rose-50 border-rose-200' : 'bg-white border-slate-200'}`}>
+                  <p className={`text-2xl font-extrabold ${importResult.failed > 0 ? 'text-rose-700' : 'text-slate-400'}`}>{importResult.failed}</p>
+                  <p className={`text-[10px] font-bold uppercase tracking-widest mt-0.5 ${importResult.failed > 0 ? 'text-rose-600' : 'text-slate-500'}`}>Gagal</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Detail List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-1.5">
+              {importResult.details.map((d, idx) => (
+                <div
+                  key={idx}
+                  className={`flex items-start gap-3 p-3 rounded-xl border text-sm ${
+                    d.status === 'success'
+                      ? 'bg-emerald-50/50 border-emerald-100'
+                      : 'bg-rose-50/50 border-rose-100'
+                  }`}
+                >
+                  <span className={`material-symbols-outlined text-[18px] mt-0.5 shrink-0 ${
+                    d.status === 'success' ? 'text-emerald-600' : 'text-rose-600'
+                  }`}>
+                    {d.status === 'success' ? 'check_circle' : 'error'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-500">Baris {d.row}</span>
+                      {d.jalur && <span className="text-xs text-primary font-semibold truncate">{d.jalur}</span>}
+                    </div>
+                    <p className={`text-xs mt-0.5 ${d.status === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {d.message}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Close Button */}
+            <div className="p-4 border-t border-slate-200 bg-white shrink-0">
+              <button
+                onClick={() => setImportResult(null)}
+                className="w-full py-3 rounded-xl bg-primary text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-primary/20 hover:bg-primary/90 transition-all active:scale-[0.98] uppercase tracking-wider"
+              >
+                <span className="material-symbols-outlined text-[18px]">done</span>
+                Tutup
+              </button>
             </div>
           </div>
         </div>

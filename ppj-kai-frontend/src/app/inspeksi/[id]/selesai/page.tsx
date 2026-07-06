@@ -68,6 +68,7 @@ function formatDuration(detik: number | null) {
 export default function InspeksiSelesaiPage({ params }: { params: { id: string } }) {
   const [tugas, setTugas] = useState<Tugas | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   useEffect(() => {
     const fetchDetail = async () => {
@@ -82,6 +83,26 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
     };
     fetchDetail();
   }, [params.id]);
+
+  const handleDownloadPdf = async () => {
+    try {
+      setIsDownloading(true);
+      const res = await api.get(`/tugas/${params.id}/report`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `Laporan_Inspeksi_PPJ_${params.id}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error('Download PDF error:', err);
+      alert(err.response?.data?.message || 'Gagal mengunduh laporan PDF.');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -224,7 +245,16 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
 
       {/* Bottom Action */}
       <div className="fixed bottom-0 left-0 right-0 bg-surface/90 backdrop-blur-xl px-container-padding py-md shadow-[0px_-8px_24px_rgba(0,0,0,0.05)] z-40 border-t border-outline-variant/10">
-        <div className="max-w-xl mx-auto">
+        <div className="max-w-xl mx-auto flex flex-col gap-sm">
+          <button
+            onClick={handleDownloadPdf}
+            disabled={isDownloading}
+            className="w-full bg-surface-container-high text-on-surface border border-outline-variant font-h3 text-h3 py-md rounded-xl shadow-sm active:scale-[0.98] transition-all flex items-center justify-center gap-md disabled:opacity-50"
+          >
+            {isDownloading ? 'Mengunduh Laporan...' : 'Download Laporan PDF'}
+            <span className="material-symbols-outlined">{isDownloading ? 'hourglass_empty' : 'picture_as_pdf'}</span>
+          </button>
+          
           <Link href="/inspeksi" className="w-full bg-primary text-on-primary font-h3 text-h3 py-md rounded-xl shadow-lg active:scale-[0.98] transition-all flex items-center justify-center gap-md">
             Kembali ke Daftar Tugas
             <span className="material-symbols-outlined">map</span>

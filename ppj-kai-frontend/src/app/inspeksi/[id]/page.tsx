@@ -174,7 +174,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     if (!isVerified) { setVerifyModalOpen(true); return; }
     if (!gpsPos) { alert('Menunggu sinyal GPS...'); return; }
     try {
-      const res = await api.post(`/tracking/start/${params.id}`, { lat: gpsPos.lat, lng: gpsPos.lng });
+      const res = await api.post(`/tracking/start/${params.id}`, { lat: gpsPos.lat, lng: gpsPos.lng, fotoAwal: selfieDataUrl });
       const newTrackingId = res.data.trackingId;
       const startedAt = Date.now();
       const initialPath: [number, number][] = [[gpsPos.lat, gpsPos.lng]];
@@ -204,7 +204,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     if (stopLat === null || stopLng === null) { alert('Tidak ada posisi GPS yang tersedia.'); return; }
     try {
       setIsStopping(true);
-      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng });
+      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, fotoSelesai: endSelfieDataUrl });
       if (timerRef.current) clearInterval(timerRef.current);
       localStorage.removeItem(STORAGE_KEY); // Clear persisted session
       router.push(`/inspeksi/${params.id}/selesai`);
@@ -548,33 +548,35 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
         ) : (
           <>
             {/* Emergency FAB */}
-            <div className="absolute right-container-padding bottom-[240px] pointer-events-auto">
+            <div className="fixed right-container-padding bottom-[180px] z-40 pointer-events-auto">
               <button onClick={() => setIsEmergencyModalOpen(true)} className="w-16 h-16 bg-error text-on-error rounded-full shadow-[0px_8px_24px_rgba(186,26,26,0.3)] flex items-center justify-center hover:scale-105 transition-transform active:scale-95">
                 <span className="material-symbols-outlined text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>warning</span>
               </button>
             </div>
+            
             {/* Active Tracking Panel */}
-            <div className="bg-white rounded-t-[32px] shadow-[0px_-8px_24px_rgba(0,0,0,0.08)] px-lg pt-lg pb-[100px] fixed bottom-0 left-0 right-0 z-40 pointer-events-auto">
-              <div className="flex justify-between items-center mb-lg px-md">
-                <div className="flex flex-col items-center">
-                  <div className="text-on-surface-variant font-label-sm uppercase text-[10px] mb-1">Duration</div>
-                  <div className="text-on-surface font-h2 font-bold">{formatTime(elapsed)}</div>
+            <div className="fixed bottom-0 left-0 w-full px-container-padding pb-container-padding z-40 pointer-events-auto">
+              <div className="bg-surface/95 backdrop-blur-xl rounded-2xl shadow-[0px_4px_24px_rgba(0,0,0,0.12)] p-md max-w-3xl mx-auto border border-outline-variant/20 flex flex-col gap-md">
+                <div className="flex justify-around items-center px-sm">
+                  <div className="flex flex-col items-center">
+                    <div className="text-on-surface-variant font-label-sm uppercase tracking-wider text-[10px] mb-1">Duration</div>
+                    <div className="text-primary font-h2 font-bold tabular-nums">{formatTime(elapsed)}</div>
+                  </div>
+                  <div className="w-px h-10 bg-outline-variant/50" />
+                  <div className="flex flex-col items-center">
+                    <div className="text-on-surface-variant font-label-sm uppercase tracking-wider text-[10px] mb-1">Jarak</div>
+                    <div className="text-primary font-h2 font-bold tabular-nums">{totalDistanceKm}<span className="text-[12px] font-normal ml-0.5 text-on-surface-variant">km</span></div>
+                  </div>
+                  <div className="w-px h-10 bg-outline-variant/50" />
+                  <div className="flex flex-col items-center">
+                    <div className="text-on-surface-variant font-label-sm uppercase tracking-wider text-[10px] mb-1">Accuracy</div>
+                    <div className="text-primary font-h2 font-bold tabular-nums">±{gpsPos ? Math.round(gpsPos.accuracy) : '-'}m</div>
+                  </div>
                 </div>
-                <div className="w-px h-8 bg-outline-variant/30" />
-                <div className="flex flex-col items-center">
-                  <div className="text-on-surface-variant font-label-sm uppercase text-[10px] mb-1">Jarak</div>
-                  <div className="text-on-surface font-h2 font-bold">{totalDistanceKm}<span className="text-[12px] font-normal ml-0.5">km</span></div>
-                </div>
-                <div className="w-px h-8 bg-outline-variant/30" />
-                <div className="flex flex-col items-center">
-                  <div className="text-on-surface-variant font-label-sm uppercase text-[10px] mb-1">Accuracy</div>
-                  <div className="text-on-surface font-h2 font-bold">±{gpsPos ? Math.round(gpsPos.accuracy) : '-'}m</div>
-                </div>
-              </div>
-              <div className="flex gap-md items-center">
-                <button onClick={() => setShowStopModal(true)} className="flex-1 bg-error text-on-error rounded-full h-[56px] flex items-center justify-center gap-sm font-h3 shadow-lg active:scale-95 transition-transform">
-                  <span className="material-symbols-outlined text-[28px]" style={{ fontVariationSettings: "'FILL' 1" }}>stop_circle</span>
-                  Selesai
+                
+                <button onClick={() => setShowStopModal(true)} className="w-full bg-error text-on-error rounded-xl h-[52px] flex items-center justify-center gap-sm font-h3 shadow-sm active:scale-[0.98] transition-transform hover:bg-error/90">
+                  <span className="material-symbols-outlined text-[24px]" style={{ fontVariationSettings: "'FILL' 1" }}>stop_circle</span>
+                  Selesai Inspeksi
                 </button>
               </div>
             </div>

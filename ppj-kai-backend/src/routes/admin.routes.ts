@@ -1,10 +1,15 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { requireAuth, requireAdmin, requireAdminLike, requireCanWrite } from '../middleware/auth.middleware';
 import {
   getStats, getAllPetugas, getAvailablePetugas, addPetugasToManager,
   removePetugasFromManager, getAllTugas, createTugas, deleteTugas, getAllEmergency,
   getAllUsers, createUser, updateUser, deleteUser, getAllWilayah, getLivePositions,
+  downloadTugasTemplate, importTugasFromExcel,
 } from '../controllers/admin.controller';
+
+// Multer memory storage for Excel file uploads
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB max
 
 const router = Router();
 
@@ -21,6 +26,10 @@ router.post('/petugas/add', requireAuth, requireCanWrite, addPetugasToManager);
 router.post('/petugas/remove', requireAuth, requireCanWrite, removePetugasFromManager);
 router.post('/tugas', requireAuth, requireCanWrite, createTugas);
 router.delete('/tugas/:id', requireAuth, requireCanWrite, deleteTugas);
+
+// ── Excel import/export — admin + kupt only ──
+router.get('/tugas/template', requireAuth, requireCanWrite, downloadTugasTemplate);
+router.post('/tugas/import', requireAuth, requireCanWrite, upload.single('file'), importTugasFromExcel);
 
 // ── Account management — admin only ──
 router.get('/users', requireAuth, requireAdmin, getAllUsers);
