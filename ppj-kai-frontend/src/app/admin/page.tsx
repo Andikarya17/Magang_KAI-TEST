@@ -5,8 +5,7 @@ import dynamic from 'next/dynamic';
 import api from '../../lib/api';
 import { useRouter } from 'next/navigation';
 import { playNotification, NotificationSound, speakEmergencyAnnouncement, startLoopingNotification, stopLoopingNotification } from '../../lib/audio';
-import { showToast } from '../../lib/toast';
-import { showConfirm } from '../../lib/confirm';
+
 
 // Same deterministic color as AdminMap — NIPP → unique HSL color
 function petugasColor(nipp: string): string {
@@ -529,8 +528,8 @@ export default function AdminPage() {
           <button
             onClick={() => setActiveMenu('penugasan')}
             className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${activeMenu === 'penugasan'
-                ? 'bg-primary text-white shadow-lg shadow-primary/25'
-                : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+              ? 'bg-primary text-white shadow-lg shadow-primary/25'
+              : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
               }`}
             title="Penugasan PPJ"
           >
@@ -540,8 +539,8 @@ export default function AdminPage() {
           <button
             onClick={() => setActiveMenu('liveview')}
             className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${activeMenu === 'liveview'
-                ? 'bg-primary text-white shadow-lg shadow-primary/25'
-                : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+              ? 'bg-primary text-white shadow-lg shadow-primary/25'
+              : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
               }`}
             title="Live View"
           >
@@ -552,8 +551,8 @@ export default function AdminPage() {
             <button
               onClick={() => { setActiveMenu('akun'); fetchUsers(); }}
               className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${activeMenu === 'akun'
-                  ? 'bg-primary text-white shadow-lg shadow-primary/25'
-                  : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+                ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
                 }`}
               title="Kelola Akun"
             >
@@ -874,8 +873,8 @@ export default function AdminPage() {
                               <p className="text-xs text-slate-500 font-medium">{u.nipp}</p>
                             </div>
                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${u.role === 'qc' ? 'bg-indigo-100 text-indigo-700' :
-                                u.role === 'kupt' ? 'bg-teal-100 text-teal-700' :
-                                  'bg-slate-100 text-slate-700'
+                              u.role === 'kupt' ? 'bg-teal-100 text-teal-700' :
+                                'bg-slate-100 text-slate-700'
                               }`}>{ROLE_LABEL[u.role] || u.role}</span>
                           </div>
                           {u.wilayahAssignments.length > 0 && (
