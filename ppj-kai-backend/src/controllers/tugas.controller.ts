@@ -121,6 +121,7 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
     const latestTracking = tugas.tracking[0] || null;
     const laporanList = latestTracking?.laporan || [];
 
+
     // Helper: fetch a static map image as base64 data URI
     const fetchStaticMapBase64 = async (
       startLat: number, startLng: number, endLat: number, endLng: number
@@ -169,6 +170,7 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
       tugas.startPointLat, tugas.startPointLong,
       tugas.endPointLat, tugas.endPointLong
     );
+
 
     // Setup pdfmake with standard Helvetica font
     const pdfmake = require('pdfmake');
@@ -234,101 +236,108 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
       }
     };
 
-    // Add map image if available
-    if (mapImage) {
-      docDefinition.content.push(
-        { text: 'PETA RUTE INSPEKSI', style: 'sectionHeader', margin: [0, 10, 0, 8] },
-        { image: mapImage, width: 480, alignment: 'center', margin: [0, 0, 0, 5] },
-        {
-          text: `🟢 Titik Awal: ${tugas.startPointName || `${tugas.startPointLat.toFixed(5)}, ${tugas.startPointLong.toFixed(5)}`}    🔴 Titik Akhir: ${tugas.endPointName || `${tugas.endPointLat.toFixed(5)}, ${tugas.endPointLong.toFixed(5)}`}`,
-          style: 'laporanMeta',
-          alignment: 'center',
-          margin: [0, 0, 0, 20]
-        }
-      );
-    }
     // Add foto awal and foto selesai if available
     if (latestTracking && (latestTracking.fotoAwal || latestTracking.fotoSelesai)) {
       docDefinition.content.push({ text: 'VERIFIKASI IDENTITAS', style: 'sectionHeader', margin: [0, 10, 0, 10] });
 
-      const identityTableBody = [
-        [
-          latestTracking.fotoAwal ? { text: 'Foto Awal (Mulai)', style: 'laporanTitle', alignment: 'center' } : '',
-          latestTracking.fotoSelesai ? { text: 'Foto Akhir (Selesai)', style: 'laporanTitle', alignment: 'center' } : ''
-        ],
-        [
-          latestTracking.fotoAwal && latestTracking.fotoAwal.startsWith('data:image/') ? { image: latestTracking.fotoAwal, width: 200, alignment: 'center' } : '',
-          latestTracking.fotoSelesai && latestTracking.fotoSelesai.startsWith('data:image/') ? { image: latestTracking.fotoSelesai, width: 200, alignment: 'center' } : ''
-        ]
-      ];
+
+
+      // Add map image if available
+      if (mapImage) {
+        docDefinition.content.push(
+          { text: 'PETA RUTE INSPEKSI', style: 'sectionHeader', margin: [0, 10, 0, 8] },
+          { image: mapImage, width: 480, alignment: 'center', margin: [0, 0, 0, 5] },
+          {
+            text: `🟢 Titik Awal: ${tugas.startPointName || `${tugas.startPointLat.toFixed(5)}, ${tugas.startPointLong.toFixed(5)}`}    🔴 Titik Akhir: ${tugas.endPointName || `${tugas.endPointLat.toFixed(5)}, ${tugas.endPointLong.toFixed(5)}`}`,
+            style: 'laporanMeta',
+            alignment: 'center',
+            margin: [0, 0, 0, 20]
+          }
+        );
+      }
+      // Add foto awal and foto selesai if available
+      if (latestTracking && (latestTracking.fotoAwal || latestTracking.fotoSelesai)) {
+        docDefinition.content.push({ text: 'VERIFIKASI IDENTITAS', style: 'sectionHeader', margin: [0, 10, 0, 10] });
+
+
+        const identityTableBody = [
+          [
+            latestTracking.fotoAwal ? { text: 'Foto Awal (Mulai)', style: 'laporanTitle', alignment: 'center' } : '',
+            latestTracking.fotoSelesai ? { text: 'Foto Akhir (Selesai)', style: 'laporanTitle', alignment: 'center' } : ''
+          ],
+          [
+            latestTracking.fotoAwal && latestTracking.fotoAwal.startsWith('data:image/') ? { image: latestTracking.fotoAwal, width: 200, alignment: 'center' } : '',
+            latestTracking.fotoSelesai && latestTracking.fotoSelesai.startsWith('data:image/') ? { image: latestTracking.fotoSelesai, width: 200, alignment: 'center' } : ''
+          ]
+        ];
+
+        docDefinition.content.push({
+          layout: 'noBorders',
+          table: {
+            widths: ['*', '*'],
+            body: identityTableBody
+          },
+          margin: [0, 0, 0, 20]
+        });
+      }
+
+      docDefinition.content.push({ text: 'DAFTAR TEMUAN', style: 'sectionHeader', margin: [0, 10, 0, 10] });
+
+      if (laporanList.length === 0) {
+        docDefinition.content.push({ text: 'Inspeksi berlangsung tanpa ada temuan kendala.', italics: true, color: '#555555' });
+      } else {
+        laporanList.forEach((lap, idx) => {
+          docDefinition.content.push({
+            text: `${idx + 1}. [${lap.jenisTemuan.toUpperCase()}] ${formatTime(lap.createdAt)}`,
+            style: 'laporanTitle',
+            margin: [0, 10, 0, 2]
+          });
+
+          if (lap.deskripsi) {
+            docDefinition.content.push({
+              text: `Deskripsi: ${lap.deskripsi}`,
+              style: 'laporanDesc',
+              margin: [15, 0, 0, 2]
+            });
+          }
+
+          docDefinition.content.push({
+            text: `Koordinat: ${lap.latitude.toFixed(5)}, ${lap.longitude.toFixed(5)}`,
+            style: 'laporanMeta',
+            margin: [15, 0, 0, 5]
+          });
+
+          // if there's a photo, and it's base64, embed it
+          if (lap.foto && lap.foto.startsWith('data:image/')) {
+            try {
+              docDefinition.content.push({
+                image: lap.foto,
+                width: 250,
+                margin: [15, 5, 0, 10]
+              });
+            } catch (e) {
+              console.error('Failed to embed image for laporan', lap.id, e);
+            }
+          }
+        });
+      }
 
       docDefinition.content.push({
-        layout: 'noBorders',
-        table: {
-          widths: ['*', '*'],
-          body: identityTableBody
-        },
-        margin: [0, 0, 0, 20]
+        text: `\n\nDicetak pada: ${formatDate(new Date())} ${formatTime(new Date())}`,
+        style: 'laporanMeta',
+        alignment: 'right',
+        margin: [0, 30, 0, 0]
       });
+
+      const doc = pdfmake.createPdf(docDefinition);
+      const buffer = await doc.getBuffer();
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="Laporan_Inspeksi_PPJ_${tugas.id}.pdf"`);
+      return res.send(buffer);
+
+    } catch (error) {
+      console.error('Download Report error:', error);
+      return res.status(500).json({ success: false, message: 'Internal server error' });
     }
-
-    docDefinition.content.push({ text: 'DAFTAR TEMUAN', style: 'sectionHeader', margin: [0, 10, 0, 10] });
-
-    if (laporanList.length === 0) {
-      docDefinition.content.push({ text: 'Inspeksi berlangsung tanpa ada temuan kendala.', italics: true, color: '#555555' });
-    } else {
-      laporanList.forEach((lap, idx) => {
-        docDefinition.content.push({
-          text: `${idx + 1}. [${lap.jenisTemuan.toUpperCase()}] ${formatTime(lap.createdAt)}`,
-          style: 'laporanTitle',
-          margin: [0, 10, 0, 2]
-        });
-
-        if (lap.deskripsi) {
-          docDefinition.content.push({
-            text: `Deskripsi: ${lap.deskripsi}`,
-            style: 'laporanDesc',
-            margin: [15, 0, 0, 2]
-          });
-        }
-
-        docDefinition.content.push({
-          text: `Koordinat: ${lap.latitude.toFixed(5)}, ${lap.longitude.toFixed(5)}`,
-          style: 'laporanMeta',
-          margin: [15, 0, 0, 5]
-        });
-
-        // if there's a photo, and it's base64, embed it
-        if (lap.foto && lap.foto.startsWith('data:image/')) {
-          try {
-            docDefinition.content.push({
-              image: lap.foto,
-              width: 250,
-              margin: [15, 5, 0, 10]
-            });
-          } catch (e) {
-            console.error('Failed to embed image for laporan', lap.id, e);
-          }
-        }
-      });
-    }
-
-    docDefinition.content.push({
-      text: `\n\nDicetak pada: ${formatDate(new Date())} ${formatTime(new Date())}`,
-      style: 'laporanMeta',
-      alignment: 'right',
-      margin: [0, 30, 0, 0]
-    });
-
-    const doc = pdfmake.createPdf(docDefinition);
-    const buffer = await doc.getBuffer();
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="Laporan_Inspeksi_PPJ_${tugas.id}.pdf"`);
-    return res.send(buffer);
-
-  } catch (error) {
-    console.error('Download Report error:', error);
-    return res.status(500).json({ success: false, message: 'Internal server error' });
-  }
-};
+  };
