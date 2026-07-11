@@ -1,6 +1,7 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import api from '../../lib/api';
 
 interface Laporan {
   id: number;
@@ -44,14 +45,15 @@ interface DetailModalProps {
   onClose: () => void;
 }
 
-const jenisTemuanLabel: Record<string, string> = {
+// Default labels (overwritten by API fetch inside the component)
+const DEFAULT_LABELS: Record<string, string> = {
   berat: 'Baut Lepas',
   emergency: 'Rel Retak',
   sedang: 'Penghalang',
   ringan: 'Lainnya',
 };
 
-const jenisTemuanColor: Record<string, string> = {
+const DEFAULT_COLORS: Record<string, string> = {
   berat: 'bg-error-container text-error',
   emergency: 'bg-error-container text-error',
   sedang: 'bg-primary-container text-primary',
@@ -87,6 +89,25 @@ export default function DetailModal({ tugas, onClose }: DetailModalProps) {
     tugas.startPointLat, tugas.startPointLong,
     tugas.endPointLat, tugas.endPointLong
   ).toFixed(1);
+
+  // Dynamic labels from API
+  const [jenisTemuanLabel, setJenisTemuanLabel] = useState<Record<string, string>>(DEFAULT_LABELS);
+  const [jenisTemuanColor, setJenisTemuanColor] = useState<Record<string, string>>(DEFAULT_COLORS);
+
+  useEffect(() => {
+    api.get('/kategori-temuan').then(res => {
+      if (res.data.data && res.data.data.length > 0) {
+        const labels: Record<string, string> = {};
+        const colors: Record<string, string> = {};
+        res.data.data.forEach((k: any) => {
+          labels[k.key] = k.label;
+          colors[k.key] = k.color === 'error' ? 'bg-error-container text-error' : 'bg-primary-container text-primary';
+        });
+        setJenisTemuanLabel(labels);
+        setJenisTemuanColor(colors);
+      }
+    }).catch(() => {});
+  }, []);
 
   return (
     <div className="fixed inset-0 z-[9999] bg-on-surface/60 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4">

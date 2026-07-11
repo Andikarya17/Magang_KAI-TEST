@@ -81,6 +81,14 @@ export default function TabTracking({ tugasId, onFinish, onBack }: TabTrackingPr
   const emergencyVideoRef = useRef<HTMLVideoElement>(null);
   const emergencyStreamRef = useRef<MediaStream | null>(null);
 
+  // Dynamic emergency categories from API
+  const [emergencyCategories, setEmergencyCategories] = useState<{ key: string; icon: string; label: string; color: string }[]>([
+    { key: 'berat', icon: 'construction', label: 'Baut Lepas', color: 'error' },
+    { key: 'emergency', icon: 'broken_image', label: 'Rel Retak', color: 'error' },
+    { key: 'sedang', icon: 'block', label: 'Penghalang', color: 'primary' },
+    { key: 'ringan', icon: 'more_horiz', label: 'Lainnya', color: 'primary' },
+  ]);
+
   // Card minimize state
   const [cardMinimized, setCardMinimized] = useState(false);
 
@@ -98,6 +106,15 @@ export default function TabTracking({ tugasId, onFinish, onBack }: TabTrackingPr
 
   // localStorage key for persisting tracking session
   const STORAGE_KEY = tugasId ? `tracking_session_${tugasId}` : '';
+
+  // Fetch dynamic emergency categories from API
+  useEffect(() => {
+    api.get('/kategori-temuan').then(res => {
+      if (res.data.data && res.data.data.length > 0) {
+        setEmergencyCategories(res.data.data.map((k: any) => ({ key: k.key, icon: k.icon, label: k.label, color: k.color })));
+      }
+    }).catch(() => { /* keep defaults */ });
+  }, []);
 
   useEffect(() => {
     if (tugasId) fetchTugasDetail();
@@ -686,12 +703,7 @@ export default function TabTracking({ tugasId, onFinish, onBack }: TabTrackingPr
               <div className="flex flex-col gap-xs">
                 <label className="font-label-sm text-label-sm text-on-surface-variant uppercase">Kategori Kendala</label>
                 <div className="grid grid-cols-2 gap-sm">
-                  {[
-                    { key: 'berat', icon: 'construction', label: 'Baut Lepas', color: 'error' },
-                    { key: 'emergency', icon: 'broken_image', label: 'Rel Retak', color: 'error' },
-                    { key: 'sedang', icon: 'block', label: 'Penghalang', color: 'primary' },
-                    { key: 'ringan', icon: 'more_horiz', label: 'Lainnya', color: 'primary' },
-                  ].map(c => (
+                  {emergencyCategories.map(c => (
                     <button key={c.key} onClick={() => setJenisTemuan(c.key)}
                       className={`flex flex-col items-center justify-center p-md rounded-xl border-2 transition-colors active:scale-95 ${jenisTemuan === c.key ? `border-${c.color} bg-${c.color}-container/20 text-${c.color}` : 'border-outline-variant bg-surface-container-lowest text-on-surface'}`}>
                       <span className="material-symbols-outlined text-h1" style={jenisTemuan === c.key ? { fontVariationSettings: "'FILL' 1" } : {}}>{c.icon}</span>

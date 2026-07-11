@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import api from '../../lib/api';
 import DetailModal from './DetailModal';
 
 interface Laporan {
@@ -74,14 +75,14 @@ function formatDuration(detik: number | null) {
   return `${detik} detik`;
 }
 
-const jenisTemuanLabel: Record<string, string> = {
+const DEFAULT_JENIS_LABELS: Record<string, string> = {
   berat: 'Baut Lepas',
   emergency: 'Rel Retak',
   sedang: 'Penghalang',
   ringan: 'Lainnya',
 };
 
-function handleDownloadPDF(tugas: Tugas) {
+function handleDownloadPDF(tugas: Tugas, jenisTemuanLabel: Record<string, string> = DEFAULT_JENIS_LABELS) {
   const latestTracking = tugas.tracking?.[0] ?? null;
   const laporanList = latestTracking?.laporan ?? [];
   const routeKm = haversineKm(
@@ -232,6 +233,19 @@ function handleDownloadPDF(tugas: Tugas) {
 export default function TabHistory({ tasks, loading }: TabHistoryProps) {
   const [selectedTugas, setSelectedTugas] = useState<Tugas | null>(null);
 
+  // Dynamic labels from API
+  const [jenisLabels, setJenisLabels] = useState<Record<string, string>>(DEFAULT_JENIS_LABELS);
+
+  useEffect(() => {
+    api.get('/kategori-temuan').then(res => {
+      if (res.data.data && res.data.data.length > 0) {
+        const labels: Record<string, string> = {};
+        res.data.data.forEach((k: any) => { labels[k.key] = k.label; });
+        setJenisLabels(labels);
+      }
+    }).catch(() => {});
+  }, []);
+
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center py-20">
@@ -337,7 +351,7 @@ export default function TabHistory({ tasks, loading }: TabHistoryProps) {
                       Detail
                     </button>
                     <button
-                      onClick={() => handleDownloadPDF(tugas)}
+                      onClick={() => handleDownloadPDF(tugas, jenisLabels)}
                       className="flex-1 h-[40px] rounded-xl bg-primary text-on-primary font-label-sm flex items-center justify-center gap-xs shadow-sm hover:bg-surface-tint active:scale-[0.97] transition-all"
                     >
                       <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>

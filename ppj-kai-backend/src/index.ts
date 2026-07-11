@@ -8,6 +8,7 @@ import trackingRoutes from './routes/tracking.routes';
 import laporanRoutes from './routes/laporan.routes';
 import adminRoutes from './routes/admin.routes';
 import guestRoutes from './routes/guest.routes';
+import { getActiveKategoriTemuan } from './controllers/admin.controller';
 
 dotenv.config();
 
@@ -31,6 +32,9 @@ app.use('/api/tracking', trackingRoutes);
 app.use('/api/laporan', laporanRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/guest', guestRoutes);
+
+// Public: active emergency categories (no auth required)
+app.get('/api/kategori-temuan', getActiveKategoriTemuan);
 
 // Test DB Connection
 app.get('/api/health', async (req: Request, res: Response) => {

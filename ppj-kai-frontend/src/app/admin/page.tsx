@@ -47,6 +47,8 @@ interface Stats { totalPetugas: number; tugasAktif: number; tugasSelesai: number
 interface ManagedUser { id: number; nipp: string; nama: string; role: string; isActive: boolean; jabatan?: string; division?: string; workArea?: string; phone?: string; managerId?: number; createdAt: string; wilayahAssignments: { id: number; wilayah: { id: number; kode: string; nama: string; stations: string } }[] }
 interface WilayahItem { id: number; kode: string; nama: string; stations: string }
 
+interface KategoriTemuan { id: number; key: string; label: string; icon: string; color: string; isActive: boolean; sortOrder: number }
+
 const ROLE_BADGE: Record<string, { label: string; bg: string }> = {
   admin: { label: 'Super Admin', bg: 'bg-slate-800' },
   qc: { label: 'Quality Control', bg: 'bg-indigo-600' },
@@ -56,13 +58,14 @@ const ROLE_LABEL: Record<string, string> = { admin: 'Admin', qc: 'QC', kupt: 'KU
 
 const STATUS_COLOR: Record<string, string> = { pending: 'bg-surface-container text-on-surface-variant border-outline-variant', in_progress: 'bg-primary-container/20 text-primary border-primary/30', completed: 'bg-primary-fixed text-on-primary-fixed-variant border-transparent' };
 const STATUS_LABEL: Record<string, string> = { pending: 'Pending', in_progress: 'Berlangsung', completed: 'Selesai' };
-const JENIS_LABEL: Record<string, string> = { berat: 'Baut Lepas', emergency: 'Rel Retak', sedang: 'Penghalang', ringan: 'Lainnya' };
-const JENIS_COLOR: Record<string, string> = {
-  berat: 'bg-rose-100 text-rose-700',
-  emergency: 'bg-rose-100 text-rose-700',
-  sedang: 'bg-blue-100 text-blue-700',
-  ringan: 'bg-slate-100 text-slate-700',
-};
+
+// Predefined icon options for admin to pick from when creating categories
+const ICON_OPTIONS = [
+  'construction', 'broken_image', 'block', 'more_horiz', 'warning', 'error',
+  'track_changes', 'report_problem', 'dangerous', 'flood', 'landslide',
+  'electric_bolt', 'forest', 'fence', 'foundation', 'hardware',
+  'remove_road', 'train', 'railway_alert', 'crisis_alert',
+];
 
 export default function AdminPage() {
   const router = useRouter();
@@ -120,6 +123,27 @@ export default function AdminPage() {
   const [alertSound, setAlertSound] = useState<NotificationSound>('off');
   const [isAlarmActive, setIsAlarmActive] = useState(false);
   const lastEmergencyId = React.useRef(0);
+
+  // Kategori Temuan State
+  const [kategoriList, setKategoriList] = useState<KategoriTemuan[]>([]);
+  const [showKategoriModal, setShowKategoriModal] = useState(false);
+  const [editingKategori, setEditingKategori] = useState<KategoriTemuan | null>(null);
+  const [kategoriForm, setKategoriForm] = useState({ key: '', label: '', icon: 'warning', color: 'error' });
+  const [savingKategori, setSavingKategori] = useState(false);
+
+  // Derived label/color maps from kategoriList
+  const JENIS_LABEL: Record<string, string> = React.useMemo(() => {
+    const map: Record<string, string> = {};
+    kategoriList.forEach(k => { map[k.key] = k.label; });
+    return map;
+  }, [kategoriList]);
+  const JENIS_COLOR: Record<string, string> = React.useMemo(() => {
+    const map: Record<string, string> = {};
+    kategoriList.forEach(k => {
+      map[k.key] = k.color === 'error' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700';
+    });
+    return map;
+  }, [kategoriList]);
 
   // Load alert sound preference
   useEffect(() => {
@@ -194,6 +218,14 @@ export default function AdminPage() {
     } catch (e) { console.error(e); }
   }, []);
 
+  // Fetch kategori temuan
+  const fetchKategori = useCallback(async () => {
+    try {
+      const res = await api.get('/admin/kategori-temuan');
+      setKategoriList(res.data.data);
+    } catch (e) { console.error(e); }
+  }, []);
+
   const fetchUsers = useCallback(async () => {
     try {
       const [usersRes, wilayahRes] = await Promise.all([
@@ -222,9 +254,10 @@ export default function AdminPage() {
       }
     }).catch(() => {});
     fetchAll();
+    fetchKategori();
     const interval = setInterval(fetchAll, 15000);
     return () => clearInterval(interval);
-  }, [fetchAll]);
+  }, [fetchAll, fetchKategori]);
 
   const handleLogout = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); router.replace('/login'); };
 
@@ -665,6 +698,66 @@ export default function AdminPage() {
                   {/* Emergency Tab */}
                   {activeTab === 'emergency' && (
                     <div className="space-y-4">
+                      {/* Kategori Management */}
+                      {canWrite && (
+                        <div className="bg-slate-50 rounded-xl border border-slate-200 p-3">
+                          <div className="flex items-center justify-between mb-3">
+                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Kelola Kategori Temuan</p>
+                            <button
+                              onClick={() => {
+                                setEditingKategori(null);
+                                setKategoriForm({ key: '', label: '', icon: 'warning', color: 'error' });
+                                setShowKategoriModal(true);
+                              }}
+                              className="flex items-center gap-1 px-2.5 py-1.5 bg-primary text-white text-[10px] font-bold uppercase tracking-wider rounded-lg hover:bg-primary/90 transition-colors shadow-sm"
+                            >
+                              <span className="material-symbols-outlined text-[14px]">add</span> Tambah
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {kategoriList.map(k => (
+                              <div key={k.id} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-all ${k.isActive ? (k.color === 'error' ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-blue-50 border-blue-200 text-blue-700') : 'bg-slate-100 border-slate-200 text-slate-400 line-through'}`}>
+                                <span className="material-symbols-outlined text-[16px]">{k.icon}</span>
+                                <span>{k.label}</span>
+                                {canWrite && (
+                                  <div className="flex gap-0.5 ml-1">
+                                    <button
+                                      onClick={() => {
+                                        setEditingKategori(k);
+                                        setKategoriForm({ key: k.key, label: k.label, icon: k.icon, color: k.color });
+                                        setShowKategoriModal(true);
+                                      }}
+                                      className="p-0.5 rounded hover:bg-white/60 transition-colors"
+                                    >
+                                      <span className="material-symbols-outlined text-[14px]">edit</span>
+                                    </button>
+                                    {k.isActive && (
+                                      <button
+                                        onClick={async () => {
+                                          if (!confirm(`Nonaktifkan kategori "${k.label}"?`)) return;
+                                          try {
+                                            await api.delete(`/admin/kategori-temuan/${k.id}`);
+                                            fetchKategori();
+                                            showToast('Kategori dinonaktifkan', 'success');
+                                          } catch (err: any) {
+                                            showToast(err.response?.data?.message || 'Gagal menghapus', 'error');
+                                          }
+                                        }}
+                                        className="p-0.5 rounded hover:bg-white/60 transition-colors"
+                                      >
+                                        <span className="material-symbols-outlined text-[14px]">delete</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                            {kategoriList.length === 0 && <p className="text-xs text-slate-400 italic">Belum ada kategori</p>}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Emergency List */}
                       {emergencies.length === 0 && (
                         <div className="text-center py-8">
                           <span className="material-symbols-outlined text-slate-300 text-4xl mb-2">check_circle</span>
@@ -1433,6 +1526,115 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+
+      {/* ═══ KATEGORI TEMUAN MODAL ═══ */}
+      {showKategoriModal && (
+        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-slate-800 px-6 py-4 flex items-center justify-between shrink-0">
+              <h3 className="text-base font-bold text-white flex items-center gap-3 tracking-wide">
+                <span className="material-symbols-outlined text-rose-400 text-[20px]">category</span>
+                {editingKategori ? 'EDIT KATEGORI' : 'TAMBAH KATEGORI'}
+              </h3>
+              <button onClick={() => setShowKategoriModal(false)} className="text-slate-400 hover:text-white transition-colors">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="overflow-y-auto p-6 space-y-5 flex-1">
+              {/* Key */}
+              {!editingKategori && (
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Key (Unik, tanpa spasi)</label>
+                  <input
+                    value={kategoriForm.key}
+                    onChange={e => setKategoriForm(f => ({ ...f, key: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') }))}
+                    className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-mono"
+                    placeholder="contoh: patah_rel"
+                  />
+                </div>
+              )}
+              {/* Label */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Label (Tampil di UI)</label>
+                <input
+                  value={kategoriForm.label}
+                  onChange={e => setKategoriForm(f => ({ ...f, label: e.target.value }))}
+                  className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm"
+                  placeholder="contoh: Patah Rel"
+                />
+              </div>
+              {/* Color */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Warna Kategori</label>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setKategoriForm(f => ({ ...f, color: 'error' }))}
+                    className={`flex-1 py-3 rounded-xl border-2 text-sm font-bold flex items-center justify-center gap-2 transition-all ${kategoriForm.color === 'error' ? 'border-rose-500 bg-rose-50 text-rose-700 shadow-md' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'}`}
+                  >
+                    <div className="w-4 h-4 rounded-full bg-rose-500"></div> Darurat (Merah)
+                  </button>
+                  <button
+                    onClick={() => setKategoriForm(f => ({ ...f, color: 'primary' }))}
+                    className={`flex-1 py-3 rounded-xl border-2 text-sm font-bold flex items-center justify-center gap-2 transition-all ${kategoriForm.color === 'primary' ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-md' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'}`}
+                  >
+                    <div className="w-4 h-4 rounded-full bg-blue-500"></div> Normal (Biru)
+                  </button>
+                </div>
+              </div>
+              {/* Icon Picker */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Pilih Ikon</label>
+                <div className="grid grid-cols-5 gap-2">
+                  {ICON_OPTIONS.map(icon => (
+                    <button
+                      key={icon}
+                      onClick={() => setKategoriForm(f => ({ ...f, icon }))}
+                      className={`flex flex-col items-center justify-center py-3 rounded-xl border-2 transition-all ${kategoriForm.icon === icon ? 'border-primary bg-primary/5 text-primary shadow-md' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-slate-300'}`}
+                    >
+                      <span className="material-symbols-outlined text-[24px]">{icon}</span>
+                      <span className="text-[8px] font-medium mt-1 truncate w-full text-center px-1">{icon.replace(/_/g, ' ')}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            {/* Footer */}
+            <div className="p-5 border-t border-slate-200 flex gap-3 shrink-0 bg-white">
+              <button onClick={() => setShowKategoriModal(false)} className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">Batal</button>
+              <button
+                disabled={savingKategori || !kategoriForm.label || (!editingKategori && !kategoriForm.key)}
+                onClick={async () => {
+                  try {
+                    setSavingKategori(true);
+                    if (editingKategori) {
+                      await api.patch(`/admin/kategori-temuan/${editingKategori.id}`, {
+                        label: kategoriForm.label,
+                        icon: kategoriForm.icon,
+                        color: kategoriForm.color,
+                      });
+                      showToast('Kategori berhasil diperbarui', 'success');
+                    } else {
+                      await api.post('/admin/kategori-temuan', kategoriForm);
+                      showToast('Kategori berhasil ditambahkan', 'success');
+                    }
+                    setShowKategoriModal(false);
+                    fetchKategori();
+                  } catch (err: any) {
+                    showToast(err.response?.data?.message || 'Gagal menyimpan kategori', 'error');
+                  } finally {
+                    setSavingKategori(false);
+                  }
+                }}
+                className="flex-[2] py-3 rounded-xl bg-primary text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-primary/20 hover:bg-primary/90 disabled:opacity-60 transition-all active:scale-[0.98] uppercase tracking-wider"
+              >
+                <span className="material-symbols-outlined text-[18px]">save</span>
+                {savingKategori ? 'Menyimpan...' : (editingKategori ? 'Simpan Perubahan' : 'Tambah Kategori')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

@@ -700,13 +700,13 @@ export const downloadTugasTemplate = async (req: AuthRequest, res: Response) => 
 
     // Sheet 1: Template with headers + example row
     const templateData = [
-      ['NIPP Petugas', 'Stasiun Awal', 'Stasiun Akhir', 'Tanggal (YYYY-MM-DD)', 'Jam Mulai (HH:mm)', 'Jam Selesai (HH:mm)'],
-      [petugasList[0]?.nipp || 'KAI-1234', 'Sta. Yogyakarta', 'Sta. Solo Balapan', '2026-07-10', '08:00', '16:00'],
+      ['NIPP Petugas', 'Nama Petugas', 'Stasiun Awal', 'Stasiun Akhir', 'Tanggal (YYYY-MM-DD)', 'Jam Mulai (HH:mm)', 'Jam Selesai (HH:mm)'],
+      [petugasList[0]?.nipp || 'KAI-1234', petugasList[0]?.nama || 'Nama Petugas', 'Sta. Yogyakarta', 'Sta. Solo Balapan', '2026-07-10', '08:00', '16:00'],
     ];
     const wsTemplate = XLSX.utils.aoa_to_sheet(templateData);
     // Set column widths
     wsTemplate['!cols'] = [
-      { wch: 18 }, { wch: 22 }, { wch: 22 }, { wch: 22 }, { wch: 18 }, { wch: 18 },
+      { wch: 18 }, { wch: 28 }, { wch: 22 }, { wch: 22 }, { wch: 22 }, { wch: 18 }, { wch: 18 },
     ];
     XLSX.utils.book_append_sheet(wb, wsTemplate, 'Template Penugasan');
 
@@ -798,11 +798,12 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       }
 
       const rawNipp = String(row[0] || '').trim();
-      const rawStart = String(row[1] || '').trim();
-      const rawEnd = String(row[2] || '').trim();
-      const rawTanggal = String(row[3] || '').trim();
-      const rawJamMulai = String(row[4] || '').trim();
-      const rawJamSelesai = String(row[5] || '').trim();
+      // row[1] = Nama Petugas (read-only reference, skipped during import)
+      const rawStart = String(row[2] || '').trim();
+      const rawEnd = String(row[3] || '').trim();
+      const rawTanggal = String(row[4] || '').trim();
+      const rawJamMulai = String(row[5] || '').trim();
+      const rawJamSelesai = String(row[6] || '').trim();
 
       // Validate required fields
       if (!rawNipp) {
@@ -855,9 +856,9 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
 
       // Validate date
       let parsedDate: Date;
-      // Handle Excel serial date numbers
-      if (typeof row[3] === 'number') {
-        parsedDate = new Date(Math.round((row[3] - 25569) * 86400 * 1000));
+      // Handle Excel serial date numbers (col index shifted due to Nama column)
+      if (typeof row[4] === 'number') {
+        parsedDate = new Date(Math.round((row[4] - 25569) * 86400 * 1000));
       } else {
         parsedDate = new Date(rawTanggal);
       }
@@ -906,6 +907,111 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
     });
   } catch (error) {
     console.error('Import tugas error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRUD: KategoriTemuan — admin manages emergency categories
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getKategoriTemuan = async (_req: AuthRequest, res: Response) => {
+  try {
+    const data = await prisma.kategoriTemuan.findMany({ orderBy: { sortOrder: 'asc' } });
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Get kategori temuan error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+export const createKategoriTemuan = async (req: AuthRequest, res: Response) => {
+  try {
+    const { key, label, icon, color } = req.body;
+    if (!key || !label || !icon) {
+      return res.status(400).json({ success: false, message: 'Key, label, dan icon wajib diisi' });
+    }
+
+    // Check uniqueness
+    const existing = await prisma.kategoriTemuan.findUnique({ where: { key } });
+    if (existing) {
+      return res.status(400).json({ success: false, message: `Key "${key}" sudah digunakan` });
+    }
+
+    // Auto sort order: next after max
+    const maxSort = await prisma.kategoriTemuan.aggregate({ _max: { sortOrder: true } });
+    const nextSort = (maxSort._max.sortOrder || 0) + 1;
+
+    const created = await prisma.kategoriTemuan.create({
+      data: { key, label, icon, color: color || 'primary', sortOrder: nextSort },
+    });
+
+    return res.status(201).json({ success: true, data: created });
+  } catch (error) {
+    console.error('Create kategori temuan error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+export const updateKategoriTemuan = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { label, icon, color, sortOrder } = req.body;
+
+    const existing = await prisma.kategoriTemuan.findUnique({ where: { id: parseInt(id) } });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'Kategori tidak ditemukan' });
+    }
+
+    const updated = await prisma.kategoriTemuan.update({
+      where: { id: parseInt(id) },
+      data: {
+        ...(label !== undefined && { label }),
+        ...(icon !== undefined && { icon }),
+        ...(color !== undefined && { color }),
+        ...(sortOrder !== undefined && { sortOrder }),
+      },
+    });
+
+    return res.json({ success: true, data: updated });
+  } catch (error) {
+    console.error('Update kategori temuan error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+export const deleteKategoriTemuan = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const existing = await prisma.kategoriTemuan.findUnique({ where: { id: parseInt(id) } });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'Kategori tidak ditemukan' });
+    }
+
+    // Soft-delete: set isActive = false (so existing laporan labels still resolve)
+    const updated = await prisma.kategoriTemuan.update({
+      where: { id: parseInt(id) },
+      data: { isActive: false },
+    });
+
+    return res.json({ success: true, data: updated, message: 'Kategori dinonaktifkan' });
+  } catch (error) {
+    console.error('Delete kategori temuan error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// Public: active categories only (for petugas)
+export const getActiveKategoriTemuan = async (_req: Request, res: Response) => {
+  try {
+    const data = await prisma.kategoriTemuan.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Get active kategori temuan error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };

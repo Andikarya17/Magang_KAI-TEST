@@ -138,3 +138,16 @@ model TemplateItem {
 
   @@map("template_item")
 }
+
+model KategoriTemuan {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique @db.VarChar(50)
+  label     String   @db.VarChar(100)
+  icon      String   @db.VarChar(50)
+  color     String   @default("primary") @db.VarChar(20)
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("kategori_temuan")
+}
