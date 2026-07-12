@@ -192,6 +192,20 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const handleStartTracking = async () => {
     if (!isVerified) { setVerifyModalOpen(true); return; }
     if (!gpsPos) { showToast('Menunggu sinyal GPS...', 'warning'); return; }
+
+    // Validasi jadwal inspeksi
+    if (tugas?.tanggal && tugas?.jamMulai) {
+      const jadwal = new Date(tugas.tanggal);
+      const [hh, mm] = tugas.jamMulai.split(':');
+      jadwal.setHours(parseInt(hh, 10), parseInt(mm, 10), 0, 0);
+      
+      if (Date.now() < jadwal.getTime()) {
+        const waktuTampil = jadwal.toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' });
+        showToast(`Belum waktunya inspeksi! Jadwal Anda: ${waktuTampil}`, 'error');
+        return;
+      }
+    }
+
     try {
       const res = await api.post(`/tracking/start/${params.id}`, { lat: gpsPos.lat, lng: gpsPos.lng, fotoAwal: selfieDataUrl });
       const newTrackingId = res.data.trackingId;

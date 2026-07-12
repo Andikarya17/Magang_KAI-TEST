@@ -197,6 +197,20 @@ export default function TabTracking({ tugasId, onFinish, onBack }: TabTrackingPr
   const handleStartTracking = async () => {
     if (!isVerified) { setVerifyModalOpen(true); return; }
     if (!gpsPos) { alert('Menunggu sinyal GPS...'); return; }
+    
+    // Validasi jadwal inspeksi
+    if (tugas?.tanggal && tugas?.jamMulai) {
+      const jadwal = new Date(tugas.tanggal);
+      const [hh, mm] = tugas.jamMulai.split(':');
+      jadwal.setHours(parseInt(hh, 10), parseInt(mm, 10), 0, 0);
+      
+      if (Date.now() < jadwal.getTime()) {
+        const waktuTampil = jadwal.toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' });
+        alert(`Belum waktunya inspeksi!\nJadwal Anda: ${waktuTampil}`);
+        return;
+      }
+    }
+
     try {
       const res = await api.post(`/tracking/start/${tugasId}`, { lat: gpsPos.lat, lng: gpsPos.lng });
       const newTrackingId = res.data.trackingId;

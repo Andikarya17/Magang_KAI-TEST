@@ -80,6 +80,28 @@ export default function TabPenjadwalan({ tasks, loading, onStartTracking }: TabP
     );
   }
 
+  const getJadwalTime = (t: Tugas) => {
+    if (!t.tanggal || !t.jamMulai) return 0;
+    const jadwal = new Date(t.tanggal);
+    const [hh, mm] = t.jamMulai.split(':');
+    jadwal.setHours(parseInt(hh, 10), parseInt(mm, 10), 0, 0);
+    return jadwal.getTime();
+  };
+
+  const now = Date.now();
+  const sortedTasks = [...tasks].sort((a, b) => {
+    const timeA = getJadwalTime(a);
+    const timeB = getJadwalTime(b);
+    
+    const isA_Ready = timeA <= now;
+    const isB_Ready = timeB <= now;
+    
+    if (isA_Ready && !isB_Ready) return -1;
+    if (!isA_Ready && isB_Ready) return 1;
+    
+    return timeA - timeB;
+  });
+
   return (
     <div className="max-w-xl mx-auto px-container-padding pt-md pb-32">
       <p className="font-body-md text-on-surface-variant mb-lg">
@@ -87,45 +109,59 @@ export default function TabPenjadwalan({ tasks, loading, onStartTracking }: TabP
       </p>
 
       <div className="flex flex-col gap-md">
-        {tasks.map(tugas => {
+        {sortedTasks.map(tugas => {
           const distance = haversineKm(
             tugas.startPointLat, tugas.startPointLong,
             tugas.endPointLat, tugas.endPointLong
           );
 
+          let isBelumWaktunya = false;
+          if (tugas.tanggal && tugas.jamMulai) {
+            const jadwal = new Date(tugas.tanggal);
+            const [hh, mm] = tugas.jamMulai.split(':');
+            jadwal.setHours(parseInt(hh, 10), parseInt(mm, 10), 0, 0);
+            if (Date.now() < jadwal.getTime()) {
+              isBelumWaktunya = true;
+            }
+          }
+
           return (
             <div
               key={tugas.id}
-              className="bg-surface-container-lowest rounded-2xl border border-outline-variant shadow-sm overflow-hidden group"
+              className={`bg-surface-container-lowest rounded-2xl border overflow-hidden group ${
+                isBelumWaktunya ? 'border-outline-variant/40 opacity-75 grayscale-[0.2]' : 'border-outline-variant shadow-sm'
+              }`}
             >
               {/* Status bar accent */}
-              <div className={`h-1 ${tugas.status === 'in_progress' ? 'bg-primary' : 'bg-amber-400'}`} />
+              <div className={`h-1 ${tugas.status === 'in_progress' ? 'bg-primary' : (isBelumWaktunya ? 'bg-outline-variant' : 'bg-amber-400')}`} />
 
               <div className="p-md flex flex-col gap-sm">
                 {/* Title + Status */}
                 <div className="flex justify-between items-start gap-sm">
-                  <h2 className="font-data-heavy text-data-heavy text-on-surface flex-1 leading-snug">{tugas.jalur}</h2>
-                  <span className={`flex items-center gap-1 px-sm py-xs rounded-full font-label-sm text-[10px] uppercase border whitespace-nowrap shrink-0 ${statusStyle[tugas.status] ?? 'bg-surface-container text-on-surface-variant'}`}>
+                  <h2 className={`font-data-heavy text-data-heavy flex-1 leading-snug ${isBelumWaktunya ? 'text-on-surface-variant' : 'text-on-surface'}`}>{tugas.jalur}</h2>
+                  <span className={`flex items-center gap-1 px-sm py-xs rounded-full font-label-sm text-[10px] uppercase border whitespace-nowrap shrink-0 ${
+                    isBelumWaktunya ? 'bg-surface-container border-outline-variant/30 text-on-surface-variant' : (statusStyle[tugas.status] ?? 'bg-surface-container text-on-surface-variant')
+                  }`}>
                     <span className="material-symbols-outlined text-[12px]">{statusIcon[tugas.status]}</span>
-                    {statusLabel[tugas.status] ?? tugas.status}
+                    {isBelumWaktunya ? 'Belum Waktunya' : (statusLabel[tugas.status] ?? tugas.status)}
                   </span>
                 </div>
 
                 {/* Route */}
-                <div className="flex items-center gap-xs">
+                <div className={`flex items-center gap-xs ${isBelumWaktunya ? 'opacity-80' : ''}`}>
                   <div className="flex flex-col items-center gap-0.5">
-                    <div className="w-2 h-2 rounded-full bg-primary border-2 border-primary/30" />
+                    <div className={`w-2 h-2 rounded-full border-2 ${isBelumWaktunya ? 'bg-outline-variant border-outline-variant/30' : 'bg-primary border-primary/30'}`} />
                     <div className="w-px h-3 bg-outline-variant" />
-                    <div className="w-2 h-2 rounded-full bg-error border-2 border-error/30" />
+                    <div className={`w-2 h-2 rounded-full border-2 ${isBelumWaktunya ? 'bg-outline-variant border-outline-variant/30' : 'bg-error border-error/30'}`} />
                   </div>
                   <div className="flex flex-col gap-0.5 ml-sm">
-                    <span className="font-label-sm text-label-sm text-on-surface">{tugas.startPointName || 'Titik Awal'}</span>
+                    <span className={`font-label-sm text-label-sm ${isBelumWaktunya ? 'text-on-surface-variant' : 'text-on-surface'}`}>{tugas.startPointName || 'Titik Awal'}</span>
                     <span className="font-label-sm text-label-sm text-on-surface-variant">{tugas.endPointName || 'Titik Akhir'}</span>
                   </div>
                 </div>
 
                 {/* Meta row */}
-                <div className="flex items-center flex-wrap gap-x-lg gap-y-xs mt-xs pt-sm border-t border-outline-variant/50">
+                <div className={`flex items-center flex-wrap gap-x-lg gap-y-xs mt-xs pt-sm border-t ${isBelumWaktunya ? 'border-outline-variant/30' : 'border-outline-variant/50'}`}>
                   <span className="flex items-center gap-1 font-label-sm text-label-sm text-on-surface-variant">
                     <span className="material-symbols-outlined text-[14px]">straighten</span>
                     {distance.toFixed(1)} km
@@ -144,17 +180,18 @@ export default function TabPenjadwalan({ tasks, loading, onStartTracking }: TabP
 
                 {/* Start Tracking Button */}
                 <button
+                  disabled={isBelumWaktunya}
                   onClick={() => onStartTracking(tugas.id)}
-                  className={`w-full mt-sm font-body-md font-semibold h-[44px] rounded-xl flex items-center justify-center gap-sm shadow-sm active:scale-[0.97] transition-all ${
-                    tugas.status === 'in_progress'
-                      ? 'bg-primary text-on-primary hover:bg-surface-tint'
-                      : 'bg-primary text-on-primary hover:bg-surface-tint'
+                  className={`w-full mt-sm font-body-md font-semibold h-[44px] rounded-xl flex items-center justify-center gap-sm shadow-sm transition-all ${
+                    isBelumWaktunya
+                      ? 'bg-surface-container border border-outline-variant/30 text-on-surface-variant cursor-not-allowed opacity-80'
+                      : (tugas.status === 'in_progress' ? 'bg-primary text-on-primary hover:bg-surface-tint active:scale-[0.97]' : 'bg-primary text-on-primary hover:bg-surface-tint active:scale-[0.97]')
                   }`}
                 >
                   <span className="material-symbols-outlined text-[20px]">
-                    {tugas.status === 'in_progress' ? 'play_circle' : 'play_arrow'}
+                    {isBelumWaktunya ? 'lock_clock' : (tugas.status === 'in_progress' ? 'play_circle' : 'play_arrow')}
                   </span>
-                  {tugas.status === 'in_progress' ? 'Lanjutkan Tracking' : 'Mulai Tracking'}
+                  {isBelumWaktunya ? 'Belum Waktunya' : (tugas.status === 'in_progress' ? 'Lanjutkan Tracking' : 'Mulai Tracking')}
                 </button>
               </div>
             </div>

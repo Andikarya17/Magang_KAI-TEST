@@ -28,6 +28,17 @@ export const startTracking = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Tugas not found' });
     }
 
+    if (tugas.tanggal && tugas.jamMulai) {
+      const jadwal = new Date(tugas.tanggal);
+      const [hh, mm] = tugas.jamMulai.split(':');
+      jadwal.setHours(parseInt(hh, 10), parseInt(mm, 10), 0, 0);
+      
+      if (new Date() < jadwal) {
+        return res.status(400).json({ success: false, message: 'Belum waktunya inspeksi! Silakan tunggu jadwal Anda.' });
+      }
+    }
+
+
     // Create tracking session with proper schema fields
     const tracking = await prisma.tracking.create({
       data: {
