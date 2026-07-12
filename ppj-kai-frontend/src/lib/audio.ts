@@ -202,10 +202,10 @@ export function speakEmergencyAnnouncement(jenisTemuan: string, deskripsi: strin
   window.speechSynthesis.cancel();
 
   const jenisMap: Record<string, string> = {
-    emergency: 'Darurat',
-    berat: 'Temuan Berat',
-    sedang: 'Temuan Sedang',
-    ringan: 'Temuan Ringan',
+    kerusakan_rel: 'Kerusakan Rel',
+    gangguan_struktur: 'Gangguan Struktur Jalur',
+    anjlokan_kecelakaan: 'Anjlokan atau Kecelakaan',
+    lainnya: 'Temuan Lainnya',
   };
   const jenisText = jenisMap[jenisTemuan] || jenisTemuan;
 

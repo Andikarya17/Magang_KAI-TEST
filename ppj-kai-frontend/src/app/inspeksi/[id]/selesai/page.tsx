@@ -46,19 +46,19 @@ interface Tugas {
   tracking: Tracking[];
 }
 
-const jenisTemuanLabel: Record<string, string> = {
-  berat: 'Baut Lepas',
-  emergency: 'Rel Retak',
-  sedang: 'Penghalang',
-  ringan: 'Lainnya',
+// Default fallbacks (overwritten by API fetch)
+const DEFAULT_LABEL: Record<string, string> = {
+  kerusakan_rel: 'Kerusakan Rel',
+  gangguan_struktur: 'Gangguan Struktur Jalur',
+  anjlokan_kecelakaan: 'Anjlokan atau Kecelakaan',
+  lainnya: 'Lainnya',
 };
 
-const jenisTemuanColor: Record<string, string> = {
-  berat: 'bg-error-container text-error',
-  emergency: 'bg-error-container text-error',
-  sedang: 'bg-primary-container text-primary',
-  ringan: 'bg-surface-container-high text-on-surface-variant',
+const COLOR_MAP: Record<string, string> = {
+  error: 'bg-error-container text-error',
+  primary: 'bg-primary-container text-primary',
 };
+const DEFAULT_COLOR_CLASS = 'bg-surface-container-high text-on-surface-variant';
 
 function formatTime(dateStr: string | null) {
   if (!dateStr) return '-';
@@ -87,6 +87,8 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
   const [tugas, setTugas] = useState<Tugas | null>(null);
   const [loading, setLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [jenisTemuanLabel, setJenisTemuanLabel] = useState<Record<string, string>>(DEFAULT_LABEL);
+  const [jenisTemuanColor, setJenisTemuanColor] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const fetchDetail = async () => {
@@ -101,6 +103,22 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
     };
     fetchDetail();
   }, [params.id]);
+
+  // Fetch dynamic emergency categories
+  useEffect(() => {
+    api.get('/kategori-temuan').then(res => {
+      if (res.data.data && res.data.data.length > 0) {
+        const labels: Record<string, string> = {};
+        const colors: Record<string, string> = {};
+        res.data.data.forEach((k: any) => {
+          labels[k.key] = k.label;
+          colors[k.key] = COLOR_MAP[k.color] || DEFAULT_COLOR_CLASS;
+        });
+        setJenisTemuanLabel(labels);
+        setJenisTemuanColor(colors);
+      }
+    }).catch(() => { /* keep defaults */ });
+  }, []);
 
   const handleDownloadPdf = async () => {
     try {

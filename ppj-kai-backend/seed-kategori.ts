@@ -2,10 +2,10 @@ import prisma from './src/config/database';
 
 async function seedKategori() {
   const defaults = [
-    { key: 'berat', label: 'Baut Lepas', icon: 'construction', color: 'error', sortOrder: 1 },
-    { key: 'emergency', label: 'Rel Retak', icon: 'broken_image', color: 'error', sortOrder: 2 },
-    { key: 'sedang', label: 'Penghalang', icon: 'block', color: 'primary', sortOrder: 3 },
-    { key: 'ringan', label: 'Lainnya', icon: 'more_horiz', color: 'primary', sortOrder: 4 },
+    { key: 'kerusakan_rel', label: 'Kerusakan Rel', icon: 'railway_alert', color: 'error', sortOrder: 1 },
+    { key: 'gangguan_struktur', label: 'Gangguan Struktur Jalur', icon: 'foundation', color: 'error', sortOrder: 2 },
+    { key: 'anjlokan_kecelakaan', label: 'Anjlokan atau Kecelakaan', icon: 'train', color: 'error', sortOrder: 3 },
+    { key: 'lainnya', label: 'Lainnya', icon: 'more_horiz', color: 'primary', sortOrder: 4 },
   ];
 
   for (const d of defaults) {
@@ -16,7 +16,7 @@ async function seedKategori() {
     });
   }
 
-  console.log('✅ Seeded 4 default kategori temuan');
+  console.log('✅ Seeded 4 default kategori temuan (KAI)');
 }
 
 seedKategori()

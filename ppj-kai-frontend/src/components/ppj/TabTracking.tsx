@@ -83,10 +83,10 @@ export default function TabTracking({ tugasId, onFinish, onBack }: TabTrackingPr
 
   // Dynamic emergency categories from API
   const [emergencyCategories, setEmergencyCategories] = useState<{ key: string; icon: string; label: string; color: string }[]>([
-    { key: 'berat', icon: 'construction', label: 'Baut Lepas', color: 'error' },
-    { key: 'emergency', icon: 'broken_image', label: 'Rel Retak', color: 'error' },
-    { key: 'sedang', icon: 'block', label: 'Penghalang', color: 'primary' },
-    { key: 'ringan', icon: 'more_horiz', label: 'Lainnya', color: 'primary' },
+    { key: 'kerusakan_rel', icon: 'railway_alert', label: 'Kerusakan Rel', color: 'error' },
+    { key: 'gangguan_struktur', icon: 'foundation', label: 'Gangguan Struktur Jalur', color: 'error' },
+    { key: 'anjlokan_kecelakaan', icon: 'train', label: 'Anjlokan atau Kecelakaan', color: 'error' },
+    { key: 'lainnya', icon: 'more_horiz', label: 'Lainnya', color: 'primary' },
   ]);
 
   // Card minimize state
