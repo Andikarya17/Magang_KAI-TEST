@@ -104,11 +104,11 @@ const STATUS_COLOR: Record<string, string> = {
   completed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
 };
 
-const JENIS_LABEL: Record<string, string> = {
-  berat: 'Baut Lepas',
-  emergency: 'Rel Retak',
-  sedang: 'Penghalang',
-  ringan: 'Lainnya',
+const DEFAULT_JENIS_LABEL: Record<string, string> = {
+  kerusakan_rel: 'Kerusakan Rel',
+  gangguan_struktur: 'Gangguan Struktur Jalur',
+  anjlokan_kecelakaan: 'Anjlokan atau Kecelakaan',
+  lainnya: 'Lainnya',
 };
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -127,22 +127,30 @@ export default function QCPage() {
   const [selectedJalur, setSelectedJalur] = useState<string>('__all__');
   const [selectedEmergency, setSelectedEmergency] = useState<Emergency | null>(null);
   const [loading, setLoading] = useState(true);
+  const [jenisLabel, setJenisLabel] = useState<Record<string, string>>(DEFAULT_JENIS_LABEL);
 
   // ─── Data Fetching ──────────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
     try {
-      const [statsRes, tugasRes, emRes, meRes, liveRes] = await Promise.all([
+      const [statsRes, tugasRes, emRes, meRes, liveRes, katRes] = await Promise.all([
         api.get('/admin/stats'),
         api.get('/admin/tugas'),
         api.get('/admin/emergency'),
         api.get('/auth/me'),
         api.get('/admin/live-positions'),
+        api.get('/kategori-temuan'),
       ]);
       setStats(statsRes.data.data);
       setTugas(tugasRes.data.data);
       setEmergencies(emRes.data.data);
       setUser(meRes.data.user);
       setLivePositions(liveRes.data.data);
+      // Build dynamic jenis label map
+      if (katRes.data.data && katRes.data.data.length > 0) {
+        const labels: Record<string, string> = {};
+        katRes.data.data.forEach((k: { key: string; label: string }) => { labels[k.key] = k.label; });
+        setJenisLabel(labels);
+      }
     } catch (e) {
       console.error('QC fetch error:', e);
     } finally {
@@ -485,7 +493,7 @@ export default function QCPage() {
             <div className="p-6 space-y-5">
               <div className="flex justify-between items-center border-b border-slate-100 pb-3">
                 <span className="bg-rose-100 text-rose-700 px-3 py-1 rounded-md text-xs font-extrabold uppercase tracking-widest">
-                  {JENIS_LABEL[selectedEmergency.jenisTemuan] ?? selectedEmergency.jenisTemuan}
+                  {jenisLabel[selectedEmergency.jenisTemuan] ?? selectedEmergency.jenisTemuan}
                 </span>
                 <span className="text-xs font-semibold text-slate-500">
                   {new Date(selectedEmergency.createdAt).toLocaleString('id-ID')}

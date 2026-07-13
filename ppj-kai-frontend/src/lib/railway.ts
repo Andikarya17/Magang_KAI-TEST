@@ -8,6 +8,19 @@ function haversineM(lat1: number, lng1: number, lat2: number, lng2: number) {
 
 type NodeId = string;
 
+// ─── Overpass element shapes ─────────────────────────────────────────
+interface OverpassNode { lat: number; lon: number }
+interface OverpassElement {
+  type?: string;
+  id?: number;
+  lat?: number;
+  lon?: number;
+  geometry?: OverpassNode[];
+  tags?: Record<string, string>;
+  [key: string]: unknown;
+}
+interface OverpassResponse { elements?: OverpassElement[] }
+
 interface Graph {
   coords: Map<NodeId, [number, number]>;
   edges: Map<NodeId, { id: NodeId; dist: number }[]>;
@@ -15,17 +28,17 @@ interface Graph {
 
 // ─── Overpass Cache ──────────────────────────────────────────────────
 // Module-level cache keyed by rounded bbox string → avoids re-fetching
-const overpassCache = new Map<string, { elements: any[]; ts: number }>();
+const overpassCache = new Map<string, { elements: OverpassElement[]; ts: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-function getCachedOverpass(cacheKey: string): any[] | null {
+function getCachedOverpass(cacheKey: string): OverpassElement[] | null {
   const entry = overpassCache.get(cacheKey);
   if (entry && Date.now() - entry.ts < CACHE_TTL_MS) return entry.elements;
   if (entry) overpassCache.delete(cacheKey);
   return null;
 }
 
-function setCachedOverpass(cacheKey: string, elements: any[]) {
+function setCachedOverpass(cacheKey: string, elements: OverpassElement[]) {
   overpassCache.set(cacheKey, { elements, ts: Date.now() });
   // Evict old entries if cache grows too large
   if (overpassCache.size > 30) {
@@ -41,7 +54,7 @@ function bboxCacheKey(minLat: number, minLng: number, maxLat: number, maxLng: nu
 
 // ─── Graph Building ──────────────────────────────────────────────────
 
-function buildGraph(elements: any[]): Graph {
+function buildGraph(elements: OverpassElement[]): Graph {
   const coords = new Map<NodeId, [number, number]>();
   const edges = new Map<NodeId, { id: NodeId; dist: number }[]>();
 
@@ -99,7 +112,7 @@ const MAX_BRIDGE_DIST = 50; // meters
 function bridgeComponents(graph: Graph): void {
   const componentOf = findComponents(graph);
   const componentNodes = new Map<number, NodeId[]>();
-  for (const [nodeId, comp] of componentOf) {
+  for (const [nodeId, comp] of Array.from(componentOf.entries())) {
     if (!componentNodes.has(comp)) componentNodes.set(comp, []);
     componentNodes.get(comp)!.push(nodeId);
   }
@@ -143,7 +156,7 @@ function bridgeComponents(graph: Graph): void {
 function nearestNode(graph: Graph, lat: number, lng: number): NodeId | null {
   let minDist = Infinity;
   let nearest: NodeId | null = null;
-  for (const [id, [nlat, nlng]] of graph.coords) {
+  for (const [id, [nlat, nlng]] of Array.from(graph.coords.entries())) {
     const d = haversineM(lat, lng, nlat, nlng);
     if (d < minDist) { minDist = d; nearest = id; }
   }
@@ -197,7 +210,7 @@ function dijkstra(graph: Graph, startId: NodeId, endId: NodeId): [number, number
  * Filters ways by proximity to the route corridor.
  */
 function extractRawWaySegments(
-  elements: any[],
+  elements: OverpassElement[],
   startLat: number, startLng: number,
   endLat: number, endLng: number
 ): [number, number][][] {
@@ -234,7 +247,7 @@ const OVERPASS_ENDPOINTS = [
   'https://overpass.kumi.systems/api/interpreter',
 ];
 
-async function fetchOverpass(query: string, timeoutMs = 12000): Promise<any> {
+async function fetchOverpass(query: string, timeoutMs = 12000): Promise<OverpassResponse> {
   for (const endpoint of OVERPASS_ENDPOINTS) {
     try {
       const controller = new AbortController();
@@ -287,7 +300,7 @@ export async function fetchRailwayGeometry(
   const bbox = `${bMinLat.toFixed(6)},${bMinLng.toFixed(6)},${bMaxLat.toFixed(6)},${bMaxLng.toFixed(6)}`;
   const cacheKey = bboxCacheKey(bMinLat, bMinLng, bMaxLat, bMaxLng);
 
-  let elements: any[];
+  let elements: OverpassElement[];
 
   // Check cache first
   const cached = getCachedOverpass(cacheKey);
@@ -366,7 +379,7 @@ out geom;`;
           if (d < minDist) { minDist = d; nearest = { lat: node.lat, lng: node.lon, name }; }
         }
       }
-      if (el.type === 'node' && el.lat != null) {
+      if (el.type === 'node' && el.lat != null && el.lon != null) {
         const d = haversineM(lat, lng, el.lat, el.lon);
         if (d < minDist) { minDist = d; nearest = { lat: el.lat, lng: el.lon, name }; }
       }

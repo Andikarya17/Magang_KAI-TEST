@@ -1,34 +1,10 @@
-// Force Next.js rebuild
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import api from '../../../lib/api';
-import { showToast } from '../../../lib/toast';
+import api from '../../lib/api';
 
-const DynamicMap = dynamic(() => import('../../../components/map/DynamicMap'), { ssr: false });
-
-interface Tugas {
-  status: string;
-  jalur: string;
-  tanggal: string;
-  jamMulai: string;
-  startPointLat: number;
-  startPointLong: number;
-  endPointLat: number;
-  endPointLong: number;
-  startPointName: string;
-  endPointName: string;
-}
-
-interface EmergencyCategory {
-  key: string;
-  icon: string;
-  label: string;
-  color: string;
-}
+const DynamicMap = dynamic(() => import('../map/DynamicMap'), { ssr: false });
 
 // GPS Hook with improved accuracy and reliability
 function useGPS() {
@@ -69,12 +45,30 @@ function useGPS() {
   return { position, error };
 }
 
-export default function TrackingPage({ params }: { params: { id: string } }) {
-  const router = useRouter();
+interface TugasDetail {
+  status: string;
+  jalur: string;
+  tanggal: string;
+  jamMulai: string;
+  startPointLat: number;
+  startPointLong: number;
+  startPointName: string;
+  endPointLat: number;
+  endPointLong: number;
+  endPointName: string;
+}
+
+interface TabTrackingProps {
+  tugasId: number | null;
+  onFinish: () => void;
+  onBack: () => void;
+}
+
+export default function TabTracking({ tugasId, onFinish, onBack }: TabTrackingProps) {
   const { position: gpsPos, error: gpsError } = useGPS();
 
   const [status, setStatus] = useState<'pending' | 'active'>('pending');
-  const [tugas, setTugas] = useState<Tugas | null>(null);
+  const [tugas, setTugas] = useState<TugasDetail | null>(null);
   const [trackingId, setTrackingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [trackPath, setTrackPath] = useState<[number, number][]>([]);
@@ -124,18 +118,21 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const isDevEnv = typeof window !== 'undefined' && window.location.hostname === 'localhost';
 
   // localStorage key for persisting tracking session
-  const STORAGE_KEY = `tracking_session_${params.id}`;
+  const STORAGE_KEY = tugasId ? `tracking_session_${tugasId}` : '';
 
   // Fetch dynamic emergency categories from API
   useEffect(() => {
     api.get('/kategori-temuan').then(res => {
       if (res.data.data && res.data.data.length > 0) {
-        setEmergencyCategories(res.data.data.map((k: EmergencyCategory) => ({ key: k.key, icon: k.icon, label: k.label, color: k.color })));
+        setEmergencyCategories(res.data.data.map((k: { key: string; icon: string; label: string; color: string }) => ({ key: k.key, icon: k.icon, label: k.label, color: k.color })));
       }
     }).catch(() => { /* keep defaults */ });
   }, []);
 
-  useEffect(() => { fetchTugasDetail(); }, [params.id]);
+  useEffect(() => {
+    if (tugasId) fetchTugasDetail();
+    else setLoading(false);
+  }, [tugasId]);
 
   // Track GPS path when active, persist to localStorage
   useEffect(() => {
@@ -166,21 +163,22 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   }, [status]);
 
   const fetchTugasDetail = async () => {
+    if (!tugasId) return;
     try {
       setLoading(true);
-      const res = await api.get(`/tugas/${params.id}`);
+      const res = await api.get(`/tugas/${tugasId}`);
       const data = res.data.data;
       setTugas(data);
 
-      // If already completed, redirect directly to selesai
+      // If already completed, go to history
       if (data?.status === 'completed') {
-        router.replace(`/inspeksi/${params.id}/selesai`);
+        onFinish();
         return;
       }
 
       // If tugas is in_progress, ALWAYS try to restore tracking from backend
       if (data?.status === 'in_progress') {
-        const trackRes = await api.get(`/tracking/active/${params.id}`).catch(() => null);
+        const trackRes = await api.get(`/tracking/active/${tugasId}`).catch(() => null);
         if (trackRes?.data?.trackingId) {
           // Use backend startTime as authoritative source for elapsed time
           const backendStartTime = trackRes.data.startTime
@@ -211,8 +209,8 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
 
   const handleStartTracking = async () => {
     if (!isVerified) { setVerifyModalOpen(true); return; }
-    if (!gpsPos) { showToast('Menunggu sinyal GPS...', 'warning'); return; }
-
+    if (!gpsPos) { alert('Menunggu sinyal GPS...'); return; }
+    
     // Validasi jadwal inspeksi
     if (tugas?.tanggal && tugas?.jamMulai) {
       const jadwal = new Date(tugas.tanggal);
@@ -221,13 +219,13 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
       
       if (Date.now() < jadwal.getTime()) {
         const waktuTampil = jadwal.toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' });
-        showToast(`Belum waktunya inspeksi! Jadwal Anda: ${waktuTampil}`, 'error');
+        alert(`Belum waktunya inspeksi!\nJadwal Anda: ${waktuTampil}`);
         return;
       }
     }
 
     try {
-      const res = await api.post(`/tracking/start/${params.id}`, { lat: gpsPos.lat, lng: gpsPos.lng, fotoAwal: selfieDataUrl });
+      const res = await api.post(`/tracking/start/${tugasId}`, { lat: gpsPos.lat, lng: gpsPos.lng });
       const newTrackingId = res.data.trackingId;
       const startedAt = Date.now();
       const initialPath: [number, number][] = [[gpsPos.lat, gpsPos.lng]];
@@ -245,7 +243,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
       }));
     } catch (err) {
       console.error('Failed to start tracking', err);
-      showToast('Gagal memulai inspeksi.', 'error');
+      alert('Gagal memulai inspeksi.');
     }
   };
 
@@ -254,23 +252,23 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     // Use GPS position, or fallback to last known track point
     const stopLat = gpsPos?.lat ?? (trackPath.length > 0 ? trackPath[trackPath.length - 1][0] : null);
     const stopLng = gpsPos?.lng ?? (trackPath.length > 0 ? trackPath[trackPath.length - 1][1] : null);
-    if (stopLat === null || stopLng === null) { showToast('Tidak ada posisi GPS yang tersedia.', 'warning'); return; }
+    if (stopLat === null || stopLng === null) { alert('Tidak ada posisi GPS yang tersedia.'); return; }
     try {
       setIsStopping(true);
-      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, fotoSelesai: endSelfieDataUrl, routePath: trackPath });
+      await api.post(`/tracking/stop/${trackingId}`, { lat: stopLat, lng: stopLng, routePath: trackPath });
       if (timerRef.current) clearInterval(timerRef.current);
       localStorage.removeItem(STORAGE_KEY); // Clear persisted session
-      router.push(`/inspeksi/${params.id}/selesai`);
+      onFinish();
     } catch (err) {
       console.error('Failed to stop tracking', err);
-      showToast('Gagal menghentikan inspeksi.', 'error');
+      alert('Gagal menghentikan inspeksi.');
     } finally {
       setIsStopping(false);
     }
   };
 
   const handleKirimLaporan = async () => {
-    if (!trackingId || !gpsPos) { showToast('Tracking belum aktif atau GPS belum tersedia.', 'warning'); return; }
+    if (!trackingId || !gpsPos) { alert('Tracking belum aktif atau GPS belum tersedia.'); return; }
     try {
       setIsSubmittingLaporan(true);
       await api.post(`/laporan`, {
@@ -281,13 +279,13 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
         lng: gpsPos.lng,
         fotoUrl: emergencyPhoto || '',
       });
-      showToast('Laporan berhasil dikirim!', 'success');
+      alert('Laporan berhasil dikirim!');
       setIsEmergencyModalOpen(false);
       setDeskripsi('');
       setEmergencyPhoto(null);
     } catch (err) {
       console.error('Failed to send laporan', err);
-      showToast('Gagal mengirim laporan darurat.', 'error');
+      alert('Gagal mengirim laporan darurat.');
     } finally { setIsSubmittingLaporan(false); }
   };
 
@@ -303,7 +301,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
           emergencyVideoRef.current.play();
         }
       }, 100);
-    } catch { showToast('Tidak dapat mengakses kamera.', 'error'); }
+    } catch { alert('Tidak dapat mengakses kamera.'); }
   };
 
   const captureEmergencyPhoto = () => {
@@ -328,7 +326,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
       streamRef.current = stream;
       if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
-    } catch { showToast('Tidak dapat mengakses kamera.', 'error'); }
+    } catch { alert('Tidak dapat mengakses kamera.'); }
   };
 
   const capturePhoto = () => {
@@ -347,7 +345,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   };
 
   const confirmVerification = () => {
-    if (!selfieDataUrl) { showToast('Silakan ambil foto terlebih dahulu.', 'warning'); return; }
+    if (!selfieDataUrl) { alert('Silakan ambil foto terlebih dahulu.'); return; }
     setIsVerified(true);
     setVerifyModalOpen(false);
   };
@@ -360,7 +358,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
       setTimeout(() => {
         if (endVideoRef.current) { endVideoRef.current.srcObject = stream; endVideoRef.current.play(); }
       }, 100);
-    } catch { showToast('Tidak dapat mengakses kamera.', 'error'); }
+    } catch { alert('Tidak dapat mengakses kamera.'); }
   };
 
   const captureEndPhoto = () => {
@@ -379,7 +377,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   };
 
   const confirmEndVerification = () => {
-    if (!endSelfieDataUrl) { showToast('Silakan ambil foto terlebih dahulu.', 'warning'); return; }
+    if (!endSelfieDataUrl) { alert('Silakan ambil foto terlebih dahulu.'); return; }
     setEndVerified(true);
   };
 
@@ -395,8 +393,8 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     const R = 6371000;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLng = (lng2 - lng1) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   };
 
   const GEOFENCE_RADIUS = 500; // meters
@@ -422,8 +420,32 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     : null;
   const withinEndGeofence = testMode || (distanceToEnd !== null && distanceToEnd <= GEOFENCE_RADIUS);
 
+  // No tugas selected
+  if (!tugasId) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center px-container-padding py-20">
+        <div className="flex flex-col items-center text-center max-w-sm">
+          <div className="w-28 h-28 rounded-full bg-surface-container flex items-center justify-center mb-lg">
+            <span className="material-symbols-outlined text-[56px] text-outline">map</span>
+          </div>
+          <h2 className="font-h2 text-h2 font-bold text-on-surface mb-sm">Pilih Tugas Terlebih Dahulu</h2>
+          <p className="font-body-md text-on-surface-variant mb-lg leading-relaxed">
+            Silakan pilih tugas dari tab Penjadwalan untuk memulai tracking inspeksi.
+          </p>
+          <button
+            onClick={onBack}
+            className="px-lg py-sm bg-primary text-on-primary rounded-xl font-label-sm flex items-center gap-xs shadow-sm active:scale-[0.97] transition-all"
+          >
+            <span className="material-symbols-outlined text-[16px]">arrow_back</span>
+            Ke Penjadwalan
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) return (
-    <div className="flex h-screen items-center justify-center bg-background">
+    <div className="flex h-full items-center justify-center">
       <div className="flex flex-col items-center gap-md text-on-surface-variant">
         <span className="material-symbols-outlined text-primary text-[48px] animate-spin">refresh</span>
         <p className="font-body-md">Memuat data tugas...</p>
@@ -435,7 +457,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const mapLng = gpsPos?.lng ?? 106.8272;
 
   return (
-    <div className="bg-surface text-on-surface font-body-lg h-screen w-screen overflow-hidden flex flex-col relative selection:bg-primary-container selection:text-on-primary-container">
+    <div className="bg-surface text-on-surface font-body-lg h-full w-full overflow-hidden flex flex-col relative selection:bg-primary-container selection:text-on-primary-container">
       {/* Live Map Background */}
       <div className="absolute inset-0 z-0 w-full h-full">
         <DynamicMap
@@ -448,21 +470,29 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
         />
       </div>
 
-      {/* TopAppBar */}
-      <header className="top-0 z-50 sticky shadow-sm flex justify-between items-center w-full px-container-padding h-16 bg-surface/80 backdrop-blur-md">
-        <Link href="/inspeksi" className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-surface-container-high transition-colors active:scale-95 duration-150 text-primary">
+      {/* Back button overlay */}
+      <div className="absolute top-4 left-4 z-50">
+        <button
+          onClick={onBack}
+          className="w-10 h-10 rounded-full bg-surface/90 backdrop-blur-md shadow-md flex items-center justify-center text-primary hover:bg-surface active:scale-95 transition-all"
+        >
           <span className="material-symbols-outlined">arrow_back</span>
-        </Link>
-        <h1 className="font-h3 text-h3 text-primary font-bold tracking-tight">
-          {status === 'pending' ? (tugas?.jalur || 'RailTrack PPJ') : 'Inspeksi Berlangsung'}
-        </h1>
-        <div className="w-10" />
-      </header>
+        </button>
+      </div>
+
+      {/* Title overlay */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50">
+        <div className="bg-surface/90 backdrop-blur-md rounded-full px-md py-xs shadow-md">
+          <h1 className="font-label-sm text-label-sm text-primary font-bold tracking-tight whitespace-nowrap">
+            {status === 'pending' ? (tugas?.jalur || 'RailTrack PPJ') : 'Inspeksi Berlangsung'}
+          </h1>
+        </div>
+      </div>
 
       <main className="flex-1 w-full relative z-10 pointer-events-none">
         {status === 'pending' ? (
           /* Pre-Start Card — collapsible */
-          <div className="absolute bottom-24 left-0 w-full px-container-padding pointer-events-auto">
+          <div className="absolute bottom-4 left-0 w-full px-container-padding pointer-events-auto">
             <div className="bg-surface/90 backdrop-blur-xl rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.08)] border border-surface-variant flex flex-col w-full max-w-3xl mx-auto overflow-hidden">
               {/* Card Header — always visible */}
               <div className="flex items-center justify-between p-md">
@@ -484,150 +514,150 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
               {/* Card Body — collapsible */}
               {!cardMinimized && (
                 <div className="flex flex-col gap-md px-md pb-md">
-                  <div className="flex flex-col gap-sm">
-                    {/* GPS Status */}
-                    <div className={`flex items-center gap-md p-sm rounded-lg border ${gpsPos ? 'bg-surface-container-low border-outline-variant/30' : 'bg-error-container/20 border-error/30'}`}>
-                      <span className="material-symbols-outlined text-primary" style={gpsPos ? { fontVariationSettings: "'FILL' 1" } : {}}>
-                        {gpsPos ? 'check_circle' : 'gps_off'}
-                      </span>
-                      <div className="flex flex-col">
-                        <span className="font-body-md text-body-md text-on-surface font-semibold">
-                          {gpsPos ? 'GPS Location Locked' : (gpsError || 'Mencari sinyal GPS...')}
-                        </span>
-                        <span className="font-label-sm text-label-sm text-on-surface-variant">
-                          {gpsPos ? `Accuracy: ±${Math.round(gpsPos.accuracy)}m` : 'Pastikan GPS diaktifkan'}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Verifikasi Identitas */}
-                    <button
-                      onClick={() => { setVerifyModalOpen(true); openCamera(); }}
-                      className={`flex items-center justify-between p-sm rounded-lg border transition-colors focus:outline-none ${isVerified ? 'bg-surface-container-low border-outline-variant/30' : 'bg-surface-container-low hover:bg-surface-container border-error-container/50'}`}
-                    >
-                      <div className="flex items-center gap-md">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isVerified ? 'bg-primary-container text-on-primary-container' : 'bg-error-container text-on-error-container'}`}>
-                          <span className="material-symbols-outlined text-sm">{isVerified ? 'check' : 'photo_camera'}</span>
-                        </div>
-                        <span className="font-body-md text-body-md text-on-surface">Verifikasi Identitas</span>
-                      </div>
-                      {isVerified ? (
-                        <span className="text-primary font-label-sm text-label-sm uppercase flex items-center gap-xs">Terverifikasi ✓</span>
-                      ) : (
-                        <span className="text-error font-label-sm text-label-sm uppercase flex items-center gap-xs">
-                          Wajib <span className="material-symbols-outlined text-[16px]">chevron_right</span>
-                        </span>
-                      )}
-                    </button>
+              <div className="flex flex-col gap-sm">
+                {/* GPS Status */}
+                <div className={`flex items-center gap-md p-sm rounded-lg border ${gpsPos ? 'bg-surface-container-low border-outline-variant/30' : 'bg-error-container/20 border-error/30'}`}>
+                  <span className="material-symbols-outlined text-primary" style={gpsPos ? { fontVariationSettings: "'FILL' 1" } : {}}>
+                    {gpsPos ? 'check_circle' : 'gps_off'}
+                  </span>
+                  <div className="flex flex-col">
+                    <span className="font-body-md text-body-md text-on-surface font-semibold">
+                      {gpsPos ? 'GPS Location Locked' : (gpsError || 'Mencari sinyal GPS...')}
+                    </span>
+                    <span className="font-label-sm text-label-sm text-on-surface-variant">
+                      {gpsPos ? `Accuracy: ±${Math.round(gpsPos.accuracy)}m` : 'Pastikan GPS diaktifkan'}
+                    </span>
                   </div>
-
-                  {/* Route Info */}
-                  {tugas && (
-                    <div className="bg-surface-container-low rounded-lg p-sm flex items-center gap-sm">
-                      <span className="material-symbols-outlined text-primary text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>route</span>
-                      <div className="flex-1">
-                        <p className="font-label-sm text-[11px] text-on-surface-variant uppercase">Jarak Jalur</p>
-                        <p className="font-data-heavy text-on-surface">{routeKm} km</p>
-                        <p className="font-label-sm text-[10px] text-on-surface-variant">{tugas.startPointName} → {tugas.endPointName}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Geofencing Distance */}
-                  {distanceToStart !== null && (
-                    <div className={`rounded-lg p-sm border ${withinGeofence ? 'bg-primary-container/10 border-primary/30' : 'bg-error-container/10 border-error/20'}`}>
-                      <div className="flex items-center justify-between mb-xs">
-                        <span className="font-label-sm text-[11px] text-on-surface-variant uppercase flex items-center gap-xs">
-                          <span className="material-symbols-outlined text-[14px]">{withinGeofence ? 'location_on' : 'near_me'}</span>
-                          Jarak ke Titik Awal
-                        </span>
-                        <span className={`font-label-sm text-[11px] font-bold ${withinGeofence ? 'text-primary' : 'text-error'}`}>
-                          {distanceToStart < 1000 ? `${Math.round(distanceToStart)}m` : `${(distanceToStart / 1000).toFixed(1)}km`}
-                        </span>
-                      </div>
-                      <div className="w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all ${withinGeofence ? 'bg-primary' : 'bg-error'}`}
-                          style={{ width: `${Math.min(100, (GEOFENCE_RADIUS / Math.max(distanceToStart, 1)) * 100)}%` }}
-                        />
-                      </div>
-                      <p className={`font-label-sm text-[10px] mt-xs ${withinGeofence ? 'text-primary' : 'text-error'}`}>
-                        {withinGeofence ? '✓ Anda sudah berada di lokasi, siap mulai!' : `Menuju titik awal, sisa ${GEOFENCE_RADIUS} meter`}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Test Mode Toggle — localhost only */}
-                  {isDevEnv && (
-                    <button
-                      onClick={() => setTestMode(m => !m)}
-                      className={`flex items-center justify-between p-sm rounded-lg border transition-colors ${testMode
-                          ? 'bg-amber-500/10 border-amber-500/40 text-amber-600'
-                          : 'bg-surface-container border-outline-variant text-on-surface-variant'
-                        }`}
-                    >
-                      <span className="flex items-center gap-sm font-label-sm text-[11px]">
-                        <span className="material-symbols-outlined text-[16px]">science</span>
-                        Mode Testing (bypass geofencing)
-                      </span>
-                      <span className={`w-9 h-5 rounded-full relative transition-colors ${testMode ? 'bg-amber-500' : 'bg-outline-variant'}`}>
-                        <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${testMode ? 'left-4' : 'left-0.5'}`} />
-                      </span>
-                    </button>
-                  )}
-
-                  <button
-                    onClick={handleStartTracking}
-                    disabled={!gpsPos || !withinGeofence}
-                    className={`w-full text-on-primary font-body-lg font-semibold h-[48px] rounded-lg flex items-center justify-center gap-sm shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all ${testMode ? 'bg-amber-500 hover:bg-amber-600' : 'bg-primary hover:bg-surface-tint'
-                      }`}
-                  >
-                    <span className="material-symbols-outlined">play_circle</span>
-                    {!gpsPos
-                      ? 'Menunggu GPS...'
-                      : testMode
-                        ? 'Mulai Tracking (Test Mode)'
-                        : !withinGeofence
-                          ? `Mendekat ke Titik Awal (${Math.round(distanceToStart ?? 0)}m)`
-                          : 'Mulai Tracking'
-                    }
-                  </button>
                 </div>
+
+                {/* Identity Verification */}
+                <button
+                  onClick={() => { setVerifyModalOpen(true); openCamera(); }}
+                  className={`flex items-center justify-between p-sm rounded-lg border transition-colors focus:outline-none ${isVerified ? 'bg-surface-container-low border-outline-variant/30' : 'bg-surface-container-low hover:bg-surface-container border-error-container/50'}`}
+                >
+                  <div className="flex items-center gap-md">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isVerified ? 'bg-primary-container text-on-primary-container' : 'bg-error-container text-on-error-container'}`}>
+                      <span className="material-symbols-outlined text-sm">{isVerified ? 'check' : 'photo_camera'}</span>
+                    </div>
+                    <span className="font-body-md text-body-md text-on-surface">Identity Verification</span>
+                  </div>
+                  {isVerified ? (
+                    <span className="text-primary font-label-sm text-label-sm uppercase flex items-center gap-xs">Verified ✓</span>
+                  ) : (
+                    <span className="text-error font-label-sm text-label-sm uppercase flex items-center gap-xs">
+                      Required <span className="material-symbols-outlined text-[16px]">chevron_right</span>
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Route Info */}
+              {tugas && (
+                <div className="bg-surface-container-low rounded-lg p-sm flex items-center gap-sm">
+                  <span className="material-symbols-outlined text-primary text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>route</span>
+                  <div className="flex-1">
+                    <p className="font-label-sm text-[11px] text-on-surface-variant uppercase">Jarak Jalur</p>
+                    <p className="font-data-heavy text-on-surface">{routeKm} km</p>
+                    <p className="font-label-sm text-[10px] text-on-surface-variant">{tugas.startPointName} → {tugas.endPointName}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Geofencing Distance */}
+              {distanceToStart !== null && (
+                <div className={`rounded-lg p-sm border ${withinGeofence ? 'bg-primary-container/10 border-primary/30' : 'bg-error-container/10 border-error/20'}`}>
+                  <div className="flex items-center justify-between mb-xs">
+                    <span className="font-label-sm text-[11px] text-on-surface-variant uppercase flex items-center gap-xs">
+                      <span className="material-symbols-outlined text-[14px]">{withinGeofence ? 'location_on' : 'near_me'}</span>
+                      Jarak ke Titik Awal
+                    </span>
+                    <span className={`font-label-sm text-[11px] font-bold ${withinGeofence ? 'text-primary' : 'text-error'}`}>
+                      {distanceToStart < 1000 ? `${Math.round(distanceToStart)}m` : `${(distanceToStart/1000).toFixed(1)}km`}
+                    </span>
+                  </div>
+                  <div className="w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${withinGeofence ? 'bg-primary' : 'bg-error'}`}
+                      style={{ width: `${Math.min(100, (GEOFENCE_RADIUS / Math.max(distanceToStart, 1)) * 100)}%` }}
+                    />
+                  </div>
+                  <p className={`font-label-sm text-[10px] mt-xs ${withinGeofence ? 'text-primary' : 'text-error'}`}>
+                    {withinGeofence ? '✓ Anda sudah berada di lokasi, siap mulai!' : `Menuju titik awal, sisa ${GEOFENCE_RADIUS} meter`}
+                  </p>
+                </div>
+              )}
+
+              {/* Test Mode Toggle — localhost only */}
+              {isDevEnv && (
+                <button
+                  onClick={() => setTestMode(m => !m)}
+                  className={`flex items-center justify-between p-sm rounded-lg border transition-colors ${
+                    testMode
+                      ? 'bg-amber-500/10 border-amber-500/40 text-amber-600'
+                      : 'bg-surface-container border-outline-variant text-on-surface-variant'
+                  }`}
+                >
+                  <span className="flex items-center gap-sm font-label-sm text-[11px]">
+                    <span className="material-symbols-outlined text-[16px]">science</span>
+                    Mode Testing (bypass geofencing)
+                  </span>
+                  <span className={`w-9 h-5 rounded-full relative transition-colors ${testMode ? 'bg-amber-500' : 'bg-outline-variant'}`}>
+                    <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${testMode ? 'left-4' : 'left-0.5'}`} />
+                  </span>
+                </button>
+              )}
+
+              <button
+                onClick={handleStartTracking}
+                disabled={!gpsPos || !withinGeofence}
+                className={`w-full text-on-primary font-body-lg font-semibold h-[48px] rounded-lg flex items-center justify-center gap-sm shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all ${
+                  testMode ? 'bg-amber-500 hover:bg-amber-600' : 'bg-primary hover:bg-surface-tint'
+                }`}
+              >
+                <span className="material-symbols-outlined">play_circle</span>
+                {!gpsPos
+                  ? 'Menunggu GPS...'
+                  : testMode
+                  ? 'Mulai Tracking (Test Mode)'
+                  : !withinGeofence
+                  ? `Mendekat ke Titik Awal (${Math.round(distanceToStart ?? 0)}m)`
+                  : 'Mulai Tracking'
+                }
+              </button>
+              </div>
               )}
             </div>
           </div>
         ) : (
           <>
             {/* Emergency FAB */}
-            <div className="fixed right-container-padding bottom-[180px] z-40 pointer-events-auto">
+            <div className="absolute right-container-padding bottom-[240px] pointer-events-auto">
               <button onClick={() => setIsEmergencyModalOpen(true)} className="w-16 h-16 bg-error text-on-error rounded-full shadow-[0px_8px_24px_rgba(186,26,26,0.3)] flex items-center justify-center hover:scale-105 transition-transform active:scale-95">
                 <span className="material-symbols-outlined text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>warning</span>
               </button>
             </div>
-
             {/* Active Tracking Panel */}
-            <div className="fixed bottom-0 left-0 w-full px-container-padding pb-container-padding z-40 pointer-events-auto">
-              <div className="bg-surface/95 backdrop-blur-xl rounded-2xl shadow-[0px_4px_24px_rgba(0,0,0,0.12)] p-md max-w-3xl mx-auto border border-outline-variant/20 flex flex-col gap-md">
-                <div className="flex justify-around items-center px-sm">
-                  <div className="flex flex-col items-center">
-                    <div className="text-on-surface-variant font-label-sm uppercase tracking-wider text-[10px] mb-1">Duration</div>
-                    <div className="text-primary font-h2 font-bold tabular-nums">{formatTime(elapsed)}</div>
-                  </div>
-                  <div className="w-px h-10 bg-outline-variant/50" />
-                  <div className="flex flex-col items-center">
-                    <div className="text-on-surface-variant font-label-sm uppercase tracking-wider text-[10px] mb-1">Jarak</div>
-                    <div className="text-primary font-h2 font-bold tabular-nums">{totalDistanceKm}<span className="text-[12px] font-normal ml-0.5 text-on-surface-variant">km</span></div>
-                  </div>
-                  <div className="w-px h-10 bg-outline-variant/50" />
-                  <div className="flex flex-col items-center">
-                    <div className="text-on-surface-variant font-label-sm uppercase tracking-wider text-[10px] mb-1">Accuracy</div>
-                    <div className="text-primary font-h2 font-bold tabular-nums">±{gpsPos ? Math.round(gpsPos.accuracy) : '-'}m</div>
-                  </div>
+            <div className="bg-white rounded-t-[32px] shadow-[0px_-8px_24px_rgba(0,0,0,0.08)] px-lg pt-lg pb-[100px] fixed bottom-0 left-0 right-0 z-40 pointer-events-auto">
+              <div className="flex justify-between items-center mb-lg px-md">
+                <div className="flex flex-col items-center">
+                  <div className="text-on-surface-variant font-label-sm uppercase text-[10px] mb-1">Duration</div>
+                  <div className="text-on-surface font-h2 font-bold">{formatTime(elapsed)}</div>
                 </div>
-
-                <button onClick={() => setShowStopModal(true)} className="w-full bg-error text-on-error rounded-xl h-[52px] flex items-center justify-center gap-sm font-h3 shadow-sm active:scale-[0.98] transition-transform hover:bg-error/90">
-                  <span className="material-symbols-outlined text-[24px]" style={{ fontVariationSettings: "'FILL' 1" }}>stop_circle</span>
-                  Selesai Inspeksi
+                <div className="w-px h-8 bg-outline-variant/30" />
+                <div className="flex flex-col items-center">
+                  <div className="text-on-surface-variant font-label-sm uppercase text-[10px] mb-1">Jarak</div>
+                  <div className="text-on-surface font-h2 font-bold">{totalDistanceKm}<span className="text-[12px] font-normal ml-0.5">km</span></div>
+                </div>
+                <div className="w-px h-8 bg-outline-variant/30" />
+                <div className="flex flex-col items-center">
+                  <div className="text-on-surface-variant font-label-sm uppercase text-[10px] mb-1">Accuracy</div>
+                  <div className="text-on-surface font-h2 font-bold">±{gpsPos ? Math.round(gpsPos.accuracy) : '-'}m</div>
+                </div>
+              </div>
+              <div className="flex gap-md items-center">
+                <button onClick={() => setShowStopModal(true)} className="flex-1 bg-error text-on-error rounded-full h-[56px] flex items-center justify-center gap-sm font-h3 shadow-lg active:scale-95 transition-transform">
+                  <span className="material-symbols-outlined text-[28px]" style={{ fontVariationSettings: "'FILL' 1" }}>stop_circle</span>
+                  Selesai
                 </button>
               </div>
             </div>
@@ -799,7 +829,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
                       Jarak ke Titik Akhir
                     </span>
                     <span className={`font-label-sm text-[11px] font-bold ${withinEndGeofence ? 'text-primary' : 'text-error'}`}>
-                      {distanceToEnd < 1000 ? `${Math.round(distanceToEnd)}m` : `${(distanceToEnd / 1000).toFixed(1)}km`}
+                      {distanceToEnd < 1000 ? `${Math.round(distanceToEnd)}m` : `${(distanceToEnd/1000).toFixed(1)}km`}
                     </span>
                   </div>
                   <div className="w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
@@ -857,10 +887,11 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
               {isDevEnv && (
                 <button
                   onClick={() => setTestMode(m => !m)}
-                  className={`flex items-center justify-between p-sm rounded-lg border transition-colors ${testMode
+                  className={`flex items-center justify-between p-sm rounded-lg border transition-colors ${
+                    testMode
                       ? 'bg-amber-500/10 border-amber-500/40 text-amber-600'
                       : 'bg-surface-container border-outline-variant text-on-surface-variant'
-                    }`}
+                  }`}
                 >
                   <span className="flex items-center gap-sm font-label-sm text-[11px]">
                     <span className="material-symbols-outlined text-[16px]">science</span>
@@ -887,13 +918,6 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
             </div>
           </div>
         </div>
-      )}
-
-      {/* Bottom Nav */}
-      {status === 'pending' && (
-        <nav className="fixed bottom-0 w-full z-50 pb-safe bg-surface/80 backdrop-blur-md shadow-[0px_-4px_20px_rgba(0,0,0,0.05)] flex justify-around items-center h-20 px-2 md:hidden">
-          <Link href="/inspeksi" className="flex flex-col items-center justify-center bg-primary-container text-on-primary-container rounded-xl px-4 py-1.5 w-20 shadow-sm"><span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>map</span><span className="font-label-sm text-label-sm mt-1">Track</span></Link>
-        </nav>
       )}
     </div>
   );

@@ -67,6 +67,7 @@ model Tracking {
   status      String    @default("started") @db.VarChar(20)
   fotoAwal    String?   @map("foto_awal") @db.LongText
   fotoSelesai String?   @map("foto_selesai") @db.LongText
+  routePath   String?   @map("route_path") @db.LongText  // JSON: [[lat,lng], ...]
   tugas       TugasPpj  @relation(fields: [tugasId], references: [id])
   laporan   Laporan[]
   createdAt DateTime  @default(now()) @map("created_at")
@@ -108,4 +109,45 @@ model UserWilayah {
 
   @@unique([userId, wilayahId])
   @@map("user_wilayah")
+}
+
+model TemplatePenugasan {
+  id        Int            @id @default(autoincrement())
+  nama      String         @db.VarChar(100)
+  createdBy Int            @map("created_by")
+  items     TemplateItem[]
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  @@map("template_penugasan")
+}
+
+model TemplateItem {
+  id             Int               @id @default(autoincrement())
+  templateId     Int               @map("template_id")
+  assignedTo     Int               @map("assigned_to")
+  startPointName String            @map("start_point_name") @db.VarChar(200)
+  endPointName   String            @map("end_point_name") @db.VarChar(200)
+  startPointLat  Float             @map("start_point_lat")
+  startPointLong Float             @map("start_point_long")
+  endPointLat    Float             @map("end_point_lat")
+  endPointLong   Float             @map("end_point_long")
+  jamMulai       String?           @map("jam_mulai") @db.VarChar(10)
+  jamSelesai     String?           @map("jam_selesai") @db.VarChar(10)
+  template       TemplatePenugasan @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@map("template_item")
+}
+
+model KategoriTemuan {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique @db.VarChar(50)
+  label     String   @db.VarChar(100)
+  icon      String   @db.VarChar(50)
+  color     String   @default("primary") @db.VarChar(20)
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("kategori_temuan")
 }

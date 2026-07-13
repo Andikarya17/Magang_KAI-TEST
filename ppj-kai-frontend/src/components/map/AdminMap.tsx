@@ -115,7 +115,7 @@ export default function AdminMap({ emergencies, tasks, onEmergencyClick, livePos
 
     // Reset bounds restriction and min zoom first to allow map to zoom out/in freely
     mapRef.current.setMinZoom(0);
-    mapRef.current.setMaxBounds(null as any);
+    mapRef.current.setMaxBounds(null as unknown as L.LatLngBounds);
 
     if (maxBounds) {
       const bounds = L.latLngBounds(

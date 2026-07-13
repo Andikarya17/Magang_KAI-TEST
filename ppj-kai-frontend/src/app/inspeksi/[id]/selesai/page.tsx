@@ -2,7 +2,12 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import api from '../../../../lib/api';
+import { showToast } from '../../../../lib/toast';
+import { getApiErrorMessage } from '../../../../lib/utils';
+
+const DynamicMap = dynamic(() => import('../../../../components/map/DynamicMap'), { ssr: false });
 
 interface Laporan {
   id: number;
@@ -24,6 +29,7 @@ interface Tracking {
   endLong: number | null;
   durasi: number | null;
   status: string;
+  routePath: string | null;
   laporan: Laporan[];
 }
 
@@ -31,25 +37,29 @@ interface Tugas {
   id: number;
   jalur: string;
   tanggal: string;
+  startPointLat: number;
+  startPointLong: number;
+  endPointLat: number;
+  endPointLong: number;
   startPointName: string;
   endPointName: string;
   status: string;
   tracking: Tracking[];
 }
 
-const jenisTemuanLabel: Record<string, string> = {
-  berat: 'Baut Lepas',
-  emergency: 'Rel Retak',
-  sedang: 'Penghalang',
-  ringan: 'Lainnya',
+// Default fallbacks (overwritten by API fetch)
+const DEFAULT_LABEL: Record<string, string> = {
+  kerusakan_rel: 'Kerusakan Rel',
+  gangguan_struktur: 'Gangguan Struktur Jalur',
+  anjlokan_kecelakaan: 'Anjlokan atau Kecelakaan',
+  lainnya: 'Lainnya',
 };
 
-const jenisTemuanColor: Record<string, string> = {
-  berat: 'bg-error-container text-error',
-  emergency: 'bg-error-container text-error',
-  sedang: 'bg-primary-container text-primary',
-  ringan: 'bg-surface-container-high text-on-surface-variant',
+const COLOR_MAP: Record<string, string> = {
+  error: 'bg-error-container text-error',
+  primary: 'bg-primary-container text-primary',
 };
+const DEFAULT_COLOR_CLASS = 'bg-surface-container-high text-on-surface-variant';
 
 function formatTime(dateStr: string | null) {
   if (!dateStr) return '-';
@@ -65,10 +75,21 @@ function formatDuration(detik: number | null) {
   return `${detik} detik`;
 }
 
+// Haversine distance in meters
+function haversineM(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 export default function InspeksiSelesaiPage({ params }: { params: { id: string } }) {
   const [tugas, setTugas] = useState<Tugas | null>(null);
   const [loading, setLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [jenisTemuanLabel, setJenisTemuanLabel] = useState<Record<string, string>>(DEFAULT_LABEL);
+  const [jenisTemuanColor, setJenisTemuanColor] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const fetchDetail = async () => {
@@ -84,6 +105,22 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
     fetchDetail();
   }, [params.id]);
 
+  // Fetch dynamic emergency categories
+  useEffect(() => {
+    api.get('/kategori-temuan').then(res => {
+      if (res.data.data && res.data.data.length > 0) {
+        const labels: Record<string, string> = {};
+        const colors: Record<string, string> = {};
+        res.data.data.forEach((k: { key: string; label: string; color: string }) => {
+          labels[k.key] = k.label;
+          colors[k.key] = COLOR_MAP[k.color] || DEFAULT_COLOR_CLASS;
+        });
+        setJenisTemuanLabel(labels);
+        setJenisTemuanColor(colors);
+      }
+    }).catch(() => { /* keep defaults */ });
+  }, []);
+
   const handleDownloadPdf = async () => {
     try {
       setIsDownloading(true);
@@ -96,9 +133,9 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Download PDF error:', err);
-      alert(err.response?.data?.message || 'Gagal mengunduh laporan PDF.');
+      showToast(getApiErrorMessage(err, 'Gagal mengunduh laporan PDF.'), 'error');
     } finally {
       setIsDownloading(false);
     }
@@ -137,6 +174,29 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
   const latestTracking = tugas.tracking[0] ?? null;
   const laporanList = latestTracking?.laporan ?? [];
 
+  // Parse routePath from tracking data
+  let trackPath: [number, number][] = [];
+  if (latestTracking?.routePath) {
+    try {
+      const parsed = JSON.parse(latestTracking.routePath);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        trackPath = parsed;
+      }
+    } catch { /* invalid JSON, ignore */ }
+  }
+
+  // Calculate total distance from track path
+  const totalDistanceM = trackPath.reduce((sum, point, i) => {
+    if (i === 0) return 0;
+    return sum + haversineM(trackPath[i - 1][0], trackPath[i - 1][1], point[0], point[1]);
+  }, 0);
+  const totalDistanceKm = (totalDistanceM / 1000).toFixed(2);
+
+  // Map center: use trackPath midpoint or start point
+  const mapCenter = trackPath.length > 0
+    ? { lat: trackPath[Math.floor(trackPath.length / 2)][0], lng: trackPath[Math.floor(trackPath.length / 2)][1] }
+    : { lat: tugas.startPointLat, lng: tugas.startPointLong };
+
   return (
     <div className="bg-background text-on-surface min-h-screen pb-32 font-body-md antialiased">
       {/* Header */}
@@ -162,6 +222,35 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
           </p>
         </div>
 
+        {/* Peta Jalur yang Dilalui */}
+        {trackPath.length >= 2 && (
+          <section className="mb-lg">
+            <h3 className="font-h3 text-h3 text-on-surface mb-md flex items-center gap-sm">
+              <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>route</span>
+              Peta Jalur Inspeksi
+            </h3>
+            <div className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm" style={{ height: 300 }}>
+              <DynamicMap
+                lat={mapCenter.lat}
+                lng={mapCenter.lng}
+                zoom={14}
+                trackPath={trackPath}
+                routeStart={{ lat: tugas.startPointLat, lng: tugas.startPointLong, name: tugas.startPointName }}
+                routeEnd={{ lat: tugas.endPointLat, lng: tugas.endPointLong, name: tugas.endPointName }}
+              />
+            </div>
+            <div className="flex items-center justify-between mt-sm px-xs">
+              <span className="font-label-sm text-label-sm text-on-surface-variant flex items-center gap-xs">
+                <span className="material-symbols-outlined text-[14px]">straighten</span>
+                Jarak tempuh: <strong className="text-primary">{totalDistanceKm} km</strong>
+              </span>
+              <span className="font-label-sm text-label-sm text-on-surface-variant">
+                {trackPath.length} titik GPS
+              </span>
+            </div>
+          </section>
+        )}
+
         {/* Stats Grid */}
         <div className="grid grid-cols-2 gap-md mb-lg">
           <div className="col-span-2 bg-surface-container-lowest border border-outline-variant p-md rounded-xl shadow-sm">
@@ -183,9 +272,11 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
           </div>
           <div className="bg-surface-container-lowest border border-outline-variant p-md rounded-xl shadow-sm">
             <p className="font-label-sm text-on-surface-variant flex items-center gap-xs mb-xs uppercase">
-              <span className="material-symbols-outlined text-[16px]">location_on</span> Status
+              <span className="material-symbols-outlined text-[16px]">straighten</span> Jarak
             </p>
-            <p className="font-data-heavy text-data-heavy text-on-surface capitalize">{tugas.status}</p>
+            <p className="font-data-heavy text-data-heavy text-on-surface">
+              {trackPath.length >= 2 ? totalDistanceKm : '-'} <span className="text-body-md font-normal">km</span>
+            </p>
           </div>
         </div>
 

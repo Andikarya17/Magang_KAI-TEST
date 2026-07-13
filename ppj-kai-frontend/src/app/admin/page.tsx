@@ -1,10 +1,14 @@
+// Force Next.js rebuild
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import api from '../../lib/api';
 import { useRouter } from 'next/navigation';
-import { playNotification, NotificationSound } from '../../lib/audio';
+import { playNotification, NotificationSound, speakEmergencyAnnouncement, startLoopingNotification, stopLoopingNotification } from '../../lib/audio';
+import { showToast } from '../../lib/toast';
+import { showConfirm } from '../../lib/confirm';
+import { getApiErrorMessage } from '../../lib/utils';
 
 // Same deterministic color as AdminMap — NIPP → unique HSL color
 function petugasColor(nipp: string): string {
@@ -44,6 +48,8 @@ interface Stats { totalPetugas: number; tugasAktif: number; tugasSelesai: number
 interface ManagedUser { id: number; nipp: string; nama: string; role: string; isActive: boolean; jabatan?: string; division?: string; workArea?: string; phone?: string; managerId?: number; createdAt: string; wilayahAssignments: { id: number; wilayah: { id: number; kode: string; nama: string; stations: string } }[] }
 interface WilayahItem { id: number; kode: string; nama: string; stations: string }
 
+interface KategoriTemuan { id: number; key: string; label: string; icon: string; color: string; isActive: boolean; sortOrder: number }
+
 const ROLE_BADGE: Record<string, { label: string; bg: string }> = {
   admin: { label: 'Super Admin', bg: 'bg-slate-800' },
   qc: { label: 'Quality Control', bg: 'bg-indigo-600' },
@@ -53,13 +59,14 @@ const ROLE_LABEL: Record<string, string> = { admin: 'Admin', qc: 'QC', kupt: 'KU
 
 const STATUS_COLOR: Record<string, string> = { pending: 'bg-surface-container text-on-surface-variant border-outline-variant', in_progress: 'bg-primary-container/20 text-primary border-primary/30', completed: 'bg-primary-fixed text-on-primary-fixed-variant border-transparent' };
 const STATUS_LABEL: Record<string, string> = { pending: 'Pending', in_progress: 'Berlangsung', completed: 'Selesai' };
-const JENIS_LABEL: Record<string, string> = { berat: 'Baut Lepas', emergency: 'Rel Retak', sedang: 'Penghalang', ringan: 'Lainnya' };
-const JENIS_COLOR: Record<string, string> = {
-  berat: 'bg-rose-100 text-rose-700',
-  emergency: 'bg-rose-100 text-rose-700',
-  sedang: 'bg-blue-100 text-blue-700',
-  ringan: 'bg-slate-100 text-slate-700',
-};
+
+// Predefined icon options for admin to pick from when creating categories
+const ICON_OPTIONS = [
+  'construction', 'broken_image', 'block', 'more_horiz', 'warning', 'error',
+  'track_changes', 'report_problem', 'dangerous', 'flood', 'landslide',
+  'electric_bolt', 'forest', 'fence', 'foundation', 'hardware',
+  'remove_road', 'train', 'railway_alert', 'crisis_alert',
+];
 
 export default function AdminPage() {
   const router = useRouter();
@@ -73,7 +80,7 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<'map' | 'tasks' | 'emergency'>('map');
 
   // Sidebar menu state
-  const [activeMenu, setActiveMenu] = useState<'penugasan' | 'liveview' | 'akun'>('penugasan');
+  const [activeMenu, setActiveMenu] = useState<'penugasan' | 'liveview' | 'akun' | 'settings'>('penugasan');
 
   // Role-derived permissions
   const userRole = user?.role || 'admin';
@@ -95,6 +102,10 @@ export default function AdminPage() {
   const [savingUser, setSavingUser] = useState(false);
   const [userSearchQuery, setUserSearchQuery] = useState('');
 
+  // Task list filter state
+  const [tugasSearchQuery, setTugasSearchQuery] = useState('');
+  const [tugasStatusFilter, setTugasStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed'>('all');
+
   // Task form state
   const [form, setForm] = useState({ jalur: '', tanggal: '', assignedTo: '', startPointName: '', endPointName: '', startPointLat: '', startPointLong: '', endPointLat: '', endPointLong: '', jamMulai: '', jamSelesai: '' });
   const [submitting, setSubmitting] = useState(false);
@@ -115,7 +126,47 @@ export default function AdminPage() {
 
   // Audio Notification State
   const [alertSound, setAlertSound] = useState<NotificationSound>('off');
+  const [isAlarmActive, setIsAlarmActive] = useState(false);
   const lastEmergencyId = React.useRef(0);
+
+  // Kategori Temuan State
+  const [kategoriList, setKategoriList] = useState<KategoriTemuan[]>([]);
+  const [showKategoriModal, setShowKategoriModal] = useState(false);
+  const [editingKategori, setEditingKategori] = useState<KategoriTemuan | null>(null);
+  const [kategoriForm, setKategoriForm] = useState({ key: '', label: '', icon: 'warning', color: 'error' });
+  const [savingKategori, setSavingKategori] = useState(false);
+  // Drag & drop reorder state
+  const [dragKategoriId, setDragKategoriId] = useState<number | null>(null);
+  const [dragOverKategoriId, setDragOverKategoriId] = useState<number | null>(null);
+  const [reorderingKategori, setReorderingKategori] = useState(false);
+
+  // Derived label/color maps from kategoriList
+  const JENIS_LABEL: Record<string, string> = React.useMemo(() => {
+    const map: Record<string, string> = {};
+    kategoriList.forEach(k => { map[k.key] = k.label; });
+    return map;
+  }, [kategoriList]);
+  const JENIS_COLOR: Record<string, string> = React.useMemo(() => {
+    const map: Record<string, string> = {};
+    kategoriList.forEach(k => {
+      map[k.key] = k.color === 'error' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700';
+    });
+    return map;
+  }, [kategoriList]);
+
+  // Filtered task list (search by jalur/nama/nipp + status)
+  const filteredTugas = React.useMemo(() => {
+    const q = tugasSearchQuery.trim().toLowerCase();
+    return tugas.filter(t => {
+      if (tugasStatusFilter !== 'all' && t.status !== tugasStatusFilter) return false;
+      if (!q) return true;
+      return (
+        t.jalur.toLowerCase().includes(q) ||
+        (t.user?.nama?.toLowerCase().includes(q) ?? false) ||
+        (t.user?.nipp?.toLowerCase().includes(q) ?? false)
+      );
+    });
+  }, [tugas, tugasSearchQuery, tugasStatusFilter]);
 
   // Load alert sound preference
   useEffect(() => {
@@ -125,22 +176,41 @@ export default function AdminPage() {
     }
   }, []);
 
-  // Play sound on new emergency
+  // Cleanup looping alarm on unmount
+  useEffect(() => {
+    return () => {
+      stopLoopingNotification();
+    };
+  }, []);
+
+  // Play looping sound + TTS on new emergency
   useEffect(() => {
     if (emergencies.length > 0) {
       const latestId = Math.max(...emergencies.map(e => e.id));
       if (lastEmergencyId.current > 0 && latestId > lastEmergencyId.current) {
-        playNotification(alertSound);
+        // Start looping alert sound
+        startLoopingNotification(alertSound);
+        if (alertSound !== 'off') {
+          setIsAlarmActive(true);
+        }
+
+        // Find the newest emergency for TTS announcement
+        const newEmergency = emergencies.find(e => e.id === latestId);
+        if (newEmergency && alertSound !== 'off') {
+          // Delay TTS slightly so the alert sound plays first
+          setTimeout(() => {
+            const petugasNama = newEmergency.tracking?.tugas?.user?.nama || 'Petugas';
+            speakEmergencyAnnouncement(newEmergency.jenisTemuan, newEmergency.deskripsi, petugasNama);
+          }, 2500);
+        }
       }
       lastEmergencyId.current = Math.max(lastEmergencyId.current, latestId);
     }
   }, [emergencies, alertSound]);
 
-  const handleSoundChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const sound = e.target.value as NotificationSound;
-    setAlertSound(sound);
-    localStorage.setItem('admin_alert_sound', sound);
-    playNotification(sound); // Preview the sound
+  const handleStopAlarm = () => {
+    stopLoopingNotification();
+    setIsAlarmActive(false);
   };
 
   const fetchAvailablePetugas = async () => {
@@ -163,6 +233,44 @@ export default function AdminPage() {
       setEmergencies(emRes.data.data);
     } catch (e) { console.error(e); }
   }, []);
+
+  // Fetch kategori temuan
+  const fetchKategori = useCallback(async () => {
+    try {
+      const res = await api.get('/admin/kategori-temuan');
+      setKategoriList(res.data.data);
+    } catch (e) { console.error(e); }
+  }, []);
+
+  // Persist a reordered list (drag & drop). Optimistic update with rollback on failure.
+  const persistKategoriOrder = useCallback(async (ordered: KategoriTemuan[]) => {
+    const previous = kategoriList;
+    setKategoriList(ordered);
+    setReorderingKategori(true);
+    try {
+      await api.patch('/admin/kategori-temuan/reorder', { order: ordered.map(k => k.id) });
+    } catch (err: unknown) {
+      setKategoriList(previous);
+      showToast(getApiErrorMessage(err, 'Gagal menyimpan urutan'), 'error');
+    } finally {
+      setReorderingKategori(false);
+    }
+  }, [kategoriList]);
+
+  // Drop `dragKategoriId` at the position of `targetId`
+  const handleKategoriDrop = useCallback((targetId: number) => {
+    setDragOverKategoriId(null);
+    const sourceId = dragKategoriId;
+    setDragKategoriId(null);
+    if (sourceId == null || sourceId === targetId) return;
+    const list = [...kategoriList];
+    const from = list.findIndex(k => k.id === sourceId);
+    const to = list.findIndex(k => k.id === targetId);
+    if (from === -1 || to === -1) return;
+    const [moved] = list.splice(from, 1);
+    list.splice(to, 0, moved);
+    persistKategoriOrder(list);
+  }, [dragKategoriId, kategoriList, persistKategoriOrder]);
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -192,9 +300,10 @@ export default function AdminPage() {
       }
     }).catch(() => {});
     fetchAll();
+    fetchKategori();
     const interval = setInterval(fetchAll, 15000);
     return () => clearInterval(interval);
-  }, [fetchAll]);
+  }, [fetchAll, fetchKategori]);
 
   const handleLogout = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); router.replace('/login'); };
 
@@ -213,8 +322,8 @@ export default function AdminPage() {
     setShowUserModal(true);
   };
   const handleSaveUser = async () => {
-    if (!userForm.nipp || !userForm.nama || !userForm.role) { alert('Lengkapi semua field!'); return; }
-    if (!editingUser && !userForm.password) { alert('Password wajib diisi untuk akun baru!'); return; }
+    if (!userForm.nipp || !userForm.nama || !userForm.role) { showToast('Lengkapi semua field!', 'warning'); return; }
+    if (!editingUser && !userForm.password) { showToast('Password wajib diisi untuk akun baru!', 'warning'); return; }
     try {
       setSavingUser(true);
       if (editingUser) {
@@ -227,12 +336,12 @@ export default function AdminPage() {
       }
       setShowUserModal(false);
       fetchUsers();
-    } catch (e: any) { alert(e.response?.data?.message || 'Gagal menyimpan akun.'); }
+    } catch (e: unknown) { showToast(getApiErrorMessage(e, 'Gagal menyimpan akun.'), 'error'); }
     finally { setSavingUser(false); }
   };
   const handleToggleUserActive = async (u: ManagedUser) => {
     const action = u.isActive ? 'Nonaktifkan' : 'Aktifkan';
-    if (!confirm(`${action} akun ${u.nama}?`)) return;
+    if (!(await showConfirm(`${action} akun ${u.nama}?`))) return;
     try {
       if (u.isActive) {
         await api.delete(`/admin/users/${u.id}`);
@@ -240,7 +349,7 @@ export default function AdminPage() {
         await api.patch(`/admin/users/${u.id}`, { isActive: true });
       }
       fetchUsers();
-    } catch (e: any) { alert(e.response?.data?.message || 'Gagal.'); }
+    } catch (e: unknown) { showToast(getApiErrorMessage(e, 'Gagal.'), 'error'); }
   };
 
   // Station dropdown handlers
@@ -293,20 +402,20 @@ export default function AdminPage() {
   };
 
   const handleCreateTugas = async () => {
-    if (!form.jalur || !form.tanggal || !form.assignedTo || !form.startPointLat || !form.endPointLat) { alert('Lengkapi semua field!'); return; }
+    if (!form.jalur || !form.tanggal || !form.assignedTo || !form.startPointLat || !form.endPointLat) { showToast('Lengkapi semua field!', 'warning'); return; }
     try {
       setSubmitting(true);
       await api.post('/admin/tugas', form);
       setShowTaskModal(false);
       setForm({ jalur: '', tanggal: '', assignedTo: '', startPointName: '', endPointName: '', startPointLat: '', startPointLong: '', endPointLat: '', endPointLong: '', jamMulai: '', jamSelesai: '' });
       fetchAll();
-    } catch (e: any) { console.error(e); alert(e.response?.data?.message || 'Gagal membuat tugas.'); }
+    } catch (e: unknown) { console.error(e); showToast(getApiErrorMessage(e, 'Gagal membuat tugas.'), 'error'); }
     finally { setSubmitting(false); }
   };
 
   const handleDeleteTugas = async (id: number) => {
-    if (!confirm('Hapus tugas ini?')) return;
-    try { await api.delete(`/admin/tugas/${id}`); fetchAll(); } catch { alert('Gagal menghapus.'); }
+    if (!(await showConfirm('Hapus tugas ini?'))) return;
+    try { await api.delete(`/admin/tugas/${id}`); fetchAll(); } catch { showToast('Gagal menghapus.', 'error'); }
   };
 
   const handleAddPetugas = async () => {
@@ -314,24 +423,24 @@ export default function AdminPage() {
     try {
       setAddingPetugas(true);
       const res = await api.post('/admin/petugas/add', { nipps: selectedNipps });
-      alert(res.data.message);
+      showToast(res.data.message, 'success');
       setShowAddPetugasModal(false);
       setSelectedNipps([]);
       fetchAll();
-    } catch (e: any) {
-      alert(e.response?.data?.message || 'Gagal menambahkan petugas.');
+    } catch (e: unknown) {
+      showToast(getApiErrorMessage(e, 'Gagal menambahkan petugas.'), 'error');
     } finally {
       setAddingPetugas(false);
     }
   };
 
   const handleRemovePetugas = async (id: number) => {
-    if (!confirm('Hapus petugas ini dari daftar kelola Anda? Mereka tidak akan dihapus dari sistem, hanya dari pantauan Anda.')) return;
+    if (!(await showConfirm('Hapus petugas ini dari daftar kelola Anda? Mereka tidak akan dihapus dari sistem, hanya dari pantauan Anda.'))) return;
     try {
       await api.post('/admin/petugas/remove', { id });
       fetchAll();
-    } catch (e: any) {
-      alert(e.response?.data?.message || 'Gagal menghapus petugas.');
+    } catch (e: unknown) {
+      showToast(getApiErrorMessage(e, 'Gagal menghapus petugas.'), 'error');
     }
   };
 
@@ -347,8 +456,8 @@ export default function AdminPage() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-    } catch (e: any) {
-      alert(e.response?.data?.message || 'Gagal mengunduh template.');
+    } catch (e: unknown) {
+      showToast(getApiErrorMessage(e, 'Gagal mengunduh template.'), 'error');
     }
   };
 
@@ -369,8 +478,8 @@ export default function AdminPage() {
       });
       setImportResult(res.data.data);
       fetchAll(); // Refresh task list
-    } catch (e: any) {
-      alert(e.response?.data?.message || 'Gagal mengimpor file.');
+    } catch (e: unknown) {
+      showToast(getApiErrorMessage(e, 'Gagal mengimpor file.'), 'error');
     } finally {
       setImportLoading(false);
     }
@@ -381,33 +490,82 @@ export default function AdminPage() {
 
   return (
     <div className="h-screen flex flex-col bg-[#F8FAFC] font-sans overflow-hidden">
-      {/* Premium Header */}
-      <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 z-50 shadow-sm">
-        <div className="flex items-center gap-4">
-          <img src="/logo-kai.png" alt="KAI Logo" className="h-8 w-auto object-contain" />
-          <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
-          <h1 className="font-h3 text-lg font-extrabold text-slate-800 tracking-tight hidden sm:block">Command Center <span className="text-primary">PPJ</span></h1>
-          <span className={`ml-2 px-2 py-0.5 text-white font-label-sm text-[10px] rounded uppercase font-bold tracking-widest shadow-sm ${ROLE_BADGE[userRole]?.bg || 'bg-slate-800'}`}>{ROLE_BADGE[userRole]?.label || 'Portal Admin'}</span>
-        </div>
-        <div className="flex items-center gap-6">
-          {/* Sound settings */}
-          <div className="flex items-center gap-2 mr-2">
-            <span className="material-symbols-outlined text-slate-400 text-[20px]">{alertSound === 'off' ? 'notifications_off' : 'notifications_active'}</span>
-            <select
-              value={alertSound}
-              onChange={handleSoundChange}
-              className="bg-slate-50 border border-slate-200 text-slate-600 font-medium text-[11px] rounded-lg px-2 py-1.5 focus:ring-primary focus:border-primary outline-none cursor-pointer"
+      {/* ── ALARM ACTIVE OVERLAY BANNER ──────────────────── */}
+      {isAlarmActive && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm" style={{ animation: 'alarmPulse 1s ease-in-out infinite' }}>
+          <div className="bg-white rounded-3xl shadow-2xl p-8 md:p-12 flex flex-col items-center gap-6 max-w-md mx-4 border-4 border-rose-500" style={{ animation: 'alarmBounce 0.5s ease-in-out infinite alternate' }}>
+            <div className="w-20 h-20 md:w-24 md:h-24 rounded-full bg-rose-100 flex items-center justify-center" style={{ animation: 'alarmIconPulse 0.8s ease-in-out infinite' }}>
+              <span className="material-symbols-outlined text-rose-600 text-[48px] md:text-[56px]">crisis_alert</span>
+            </div>
+            <div className="text-center">
+              <h2 className="text-2xl md:text-3xl font-extrabold text-slate-800 mb-2">🚨 ALARM DARURAT</h2>
+              <p className="text-slate-500 text-sm md:text-base font-medium">Ada laporan darurat baru masuk!<br/>Segera periksa tab Insiden.</p>
+            </div>
+            <button
+              onClick={handleStopAlarm}
+              className="w-full py-4 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl text-lg font-extrabold flex items-center justify-center gap-3 shadow-lg shadow-rose-600/30 transition-all active:scale-95 uppercase tracking-wider"
             >
-              <option value="off">Suara: Mati</option>
-              <option value="siren">Suara: Sirine</option>
-              <option value="beep">Suara: Beep</option>
-              <option value="chime">Suara: Lonceng</option>
-            </select>
+              <span className="material-symbols-outlined text-[28px]">alarm_off</span>
+              Matikan Alarm
+            </button>
           </div>
-          <div className="w-px h-6 bg-slate-200"></div>
+          <style>{`
+            @keyframes alarmPulse {
+              0%, 100% { background-color: rgba(0,0,0,0.6); }
+              50% { background-color: rgba(190,18,60,0.35); }
+            }
+            @keyframes alarmBounce {
+              0% { transform: scale(1); }
+              100% { transform: scale(1.02); }
+            }
+            @keyframes alarmIconPulse {
+              0%, 100% { transform: scale(1); background-color: rgb(255 228 230); }
+              50% { transform: scale(1.15); background-color: rgb(254 205 211); }
+            }
+          `}</style>
+        </div>
+      )}
+
+      {/* Premium Header */}
+      <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-6 shrink-0 z-50 shadow-sm">
+        <div className="flex items-center gap-2 md:gap-4">
+          <img src="/logo-kai.png" alt="KAI Logo" className="h-6 md:h-8 w-auto object-contain" />
+          <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
+          <h1 className="font-h3 text-base md:text-lg font-extrabold text-slate-800 tracking-tight hidden sm:block">Command Center <span className="text-primary">PPJ</span></h1>
+          <span className={`ml-0 md:ml-2 px-2 py-0.5 text-white font-label-sm text-[10px] rounded uppercase font-bold tracking-widest shadow-sm hidden sm:inline-block ${ROLE_BADGE[userRole]?.bg || 'bg-slate-800'}`}>{ROLE_BADGE[userRole]?.label || 'Portal Admin'}</span>
+        </div>
+        <div className="flex items-center gap-3 md:gap-6">
+          {/* Sound indicator + Stop Alarm */}
+          <div className="flex items-center gap-1 md:gap-2 mr-1 md:mr-2">
+            <button
+              onClick={() => setActiveMenu('settings')}
+              className={`flex items-center gap-1 px-2 py-1.5 rounded-lg transition-colors text-[11px] font-semibold ${alertSound === 'off' ? 'text-slate-400 hover:bg-slate-100' : 'text-emerald-600 hover:bg-emerald-50'}`}
+              title={`Sirine: ${alertSound === 'off' ? 'Mati' : alertSound}`}
+            >
+              <span className="material-symbols-outlined text-[18px] md:text-[20px]">{alertSound === 'off' ? 'notifications_off' : 'notifications_active'}</span>
+              <span className="hidden md:inline capitalize">{alertSound === 'off' ? 'Mati' : alertSound}</span>
+            </button>
+            {isAlarmActive && (
+              <button
+                onClick={handleStopAlarm}
+                className="ml-1 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] md:text-[11px] font-bold rounded-lg flex items-center gap-1 shadow-sm transition-all active:scale-95"
+                style={{ animation: 'headerAlarmPulse 1s ease-in-out infinite' }}
+              >
+                <span className="material-symbols-outlined text-[16px]">alarm_off</span>
+                <span className="hidden md:inline">Stop Alarm</span>
+              </button>
+            )}
+            <style>{`
+              @keyframes headerAlarmPulse {
+                0%, 100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.4); }
+                50% { box-shadow: 0 0 0 6px rgba(225, 29, 72, 0); }
+              }
+            `}</style>
+          </div>
+          <div className="w-px h-6 bg-slate-200 hidden md:block"></div>
           
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-primary-container text-primary rounded-full flex items-center justify-center font-bold text-sm border border-primary/20">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="w-7 h-7 md:w-8 md:h-8 bg-primary-container text-primary rounded-full flex items-center justify-center font-bold text-xs md:text-sm border border-primary/20">
               {user?.nama?.substring(0, 2).toUpperCase() || 'AD'}
             </div>
             <div className="hidden md:flex flex-col">
@@ -415,62 +573,74 @@ export default function AdminPage() {
             </div>
           </div>
           <div className="w-px h-6 bg-slate-200"></div>
-          <button onClick={handleLogout} className="flex items-center gap-2 text-slate-500 hover:text-error transition-colors font-label-sm font-semibold">
-            <span className="material-symbols-outlined text-[20px]">logout</span>
+          <button onClick={handleLogout} className="flex items-center gap-2 text-slate-500 hover:text-error transition-colors font-label-sm font-semibold p-1">
+            <span className="material-symbols-outlined text-[20px] md:text-[20px]">logout</span>
           </button>
         </div>
       </header>
 
       {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-col-reverse md:flex-row flex-1 overflow-hidden relative pb-[60px] md:pb-0">
         
-        {/* Vertical Sidebar Nav */}
-        <nav className="w-[72px] bg-white border-r border-slate-200 flex flex-col items-center py-4 gap-2 shrink-0">
+        {/* Bottom / Vertical Sidebar Nav */}
+        <nav className="fixed md:static bottom-0 left-0 right-0 h-[60px] md:h-auto md:w-[72px] bg-white border-t md:border-t-0 md:border-r border-slate-200 flex flex-row md:flex-col items-center justify-around md:justify-start py-2 md:py-4 gap-2 shrink-0 z-40">
           <button
             onClick={() => setActiveMenu('penugasan')}
-            className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
+            className={`w-16 h-12 md:w-14 md:h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
               activeMenu === 'penugasan'
                 ? 'bg-primary text-white shadow-lg shadow-primary/25'
                 : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
             }`}
             title="Penugasan PPJ"
           >
-            <span className="material-symbols-outlined text-[22px]">assignment</span>
+            <span className="material-symbols-outlined text-[20px] md:text-[22px]">assignment</span>
             <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Tugas</span>
           </button>
           <button
             onClick={() => setActiveMenu('liveview')}
-            className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
+            className={`w-16 h-12 md:w-14 md:h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
               activeMenu === 'liveview'
                 ? 'bg-primary text-white shadow-lg shadow-primary/25'
                 : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
             }`}
             title="Live View"
           >
-            <span className="material-symbols-outlined text-[22px]">map</span>
+            <span className="material-symbols-outlined text-[20px] md:text-[22px]">map</span>
             <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Live</span>
           </button>
           {isAdmin && (
             <button
               onClick={() => { setActiveMenu('akun'); fetchUsers(); }}
-              className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
+              className={`w-16 h-12 md:w-14 md:h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
                 activeMenu === 'akun'
                   ? 'bg-primary text-white shadow-lg shadow-primary/25'
                   : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
               }`}
               title="Kelola Akun"
             >
-              <span className="material-symbols-outlined text-[22px]">manage_accounts</span>
+              <span className="material-symbols-outlined text-[20px] md:text-[22px]">manage_accounts</span>
               <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Akun</span>
             </button>
           )}
+          <button
+            onClick={() => { setActiveMenu('settings'); fetchKategori(); }}
+            className={`w-16 h-12 md:w-14 md:h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
+              activeMenu === 'settings'
+                ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+            }`}
+            title="Pengaturan"
+          >
+            <span className="material-symbols-outlined text-[20px] md:text-[22px]">settings</span>
+            <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Setting</span>
+          </button>
         </nav>
 
         {/* ── PENUGASAN VIEW ──────────────────────────────────── */}
         {activeMenu === 'penugasan' && (
-          <div className="flex flex-1 overflow-hidden p-4 gap-4">
+          <div className="flex flex-col md:flex-row flex-1 overflow-y-auto md:overflow-hidden p-3 md:p-4 gap-4">
             {/* Left Sidebar (Stats + Lists) */}
-            <aside className="w-[420px] flex flex-col gap-4 shrink-0">
+            <aside className="w-full md:w-[420px] flex flex-col gap-4 shrink-0">
               {/* KPI Grid */}
               <div className="grid grid-cols-2 gap-3 shrink-0">
                 {[
@@ -492,7 +662,7 @@ export default function AdminPage() {
               </div>
 
               {/* Activity Panel */}
-              <div className="flex-1 bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
+              <div className="min-h-[400px] md:min-h-0 flex-1 bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
                 {/* Tabs */}
                 <div className="flex border-b border-slate-200 shrink-0 bg-slate-50">
                   <button onClick={() => setActiveTab('map')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${activeTab === 'map' ? 'text-primary border-primary bg-primary-container/5' : 'text-slate-500 border-transparent hover:bg-slate-100'}`}>
@@ -582,6 +752,7 @@ export default function AdminPage() {
                   {/* Emergency Tab */}
                   {activeTab === 'emergency' && (
                     <div className="space-y-4">
+                      {/* Emergency List */}
                       {emergencies.length === 0 && (
                         <div className="text-center py-8">
                           <span className="material-symbols-outlined text-slate-300 text-4xl mb-2">check_circle</span>
@@ -643,21 +814,76 @@ export default function AdminPage() {
             </aside>
 
             {/* Right Area — Task List Detail / Summary */}
-            <main className="flex-1 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col relative">
+            <main className="min-h-[500px] md:min-h-0 flex-1 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col relative">
               {/* Penugasan summary with large cards */}
-              <div className="flex-1 overflow-y-auto p-6">
+              <div className="flex-1 overflow-y-auto p-4 md:p-6">
                 <h2 className="text-lg font-extrabold text-slate-800 mb-1 tracking-tight">Daftar Penugasan PPJ</h2>
-                <p className="text-sm text-slate-500 mb-6">Kelola tugas inspeksi jalur petugas Anda</p>
-                
+                <p className="text-sm text-slate-500 mb-4">Kelola tugas inspeksi jalur petugas Anda</p>
+
+                {/* Filter bar */}
+                {tugas.length > 0 && (
+                  <div className="flex flex-col sm:flex-row gap-3 mb-6">
+                    <div className="relative flex-1">
+                      <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
+                      <input
+                        value={tugasSearchQuery}
+                        onChange={e => setTugasSearchQuery(e.target.value)}
+                        placeholder="Cari jalur, nama, atau NIPP petugas..."
+                        className="w-full pl-9 pr-9 py-2.5 border border-slate-300 rounded-xl text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none font-medium"
+                      />
+                      {tugasSearchQuery && (
+                        <button
+                          onClick={() => setTugasSearchQuery('')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                          title="Bersihkan pencarian"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">close</span>
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1 shrink-0">
+                      {([
+                        ['all', 'Semua'],
+                        ['pending', 'Pending'],
+                        ['in_progress', 'Berlangsung'],
+                        ['completed', 'Selesai'],
+                      ] as const).map(([value, label]) => (
+                        <button
+                          key={value}
+                          onClick={() => setTugasStatusFilter(value)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                            tugasStatusFilter === value
+                              ? 'bg-white text-primary shadow-sm'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {tugas.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20 text-center">
                     <span className="material-symbols-outlined text-slate-200 text-6xl mb-4">assignment</span>
                     <p className="text-slate-500 font-medium">Belum ada tugas yang dibuat.</p>
                     <p className="text-slate-400 text-sm mt-1">Gunakan panel di sebelah kiri untuk membuat penugasan baru.</p>
                   </div>
+                ) : filteredTugas.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-center">
+                    <span className="material-symbols-outlined text-slate-200 text-6xl mb-4">search_off</span>
+                    <p className="text-slate-500 font-medium">Tidak ada tugas yang cocok dengan filter.</p>
+                    <button
+                      onClick={() => { setTugasSearchQuery(''); setTugasStatusFilter('all'); }}
+                      className="text-primary text-sm font-semibold mt-2 hover:underline"
+                    >
+                      Reset filter
+                    </button>
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    {tugas.map(t => {
+                    {filteredTugas.map(t => {
                       const latestTracking = t.tracking?.[0];
                       const laporanCount = latestTracking?.laporan?.length ?? 0;
                       return (
@@ -703,7 +929,7 @@ export default function AdminPage() {
 
         {/* ── LIVE VIEW ──────────────────────────────────────── */}
         {activeMenu === 'liveview' && (
-          <main className="flex-1 overflow-hidden flex flex-col relative isolate m-4 bg-white rounded-xl border border-slate-200 shadow-sm">
+          <main className="flex-1 overflow-hidden flex flex-col relative isolate m-3 md:m-4 bg-white rounded-xl border border-slate-200 shadow-sm">
             <AdminMap
               emergencies={mapEmergencies}
               tasks={mapTasks}
@@ -737,10 +963,10 @@ export default function AdminPage() {
 
         {/* ── AKUN MANAGEMENT VIEW (Admin Only) ────────────── */}
         {activeMenu === 'akun' && isAdmin && (
-          <div className="flex flex-1 overflow-hidden p-4 gap-4">
-            <div className="flex-1 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+          <div className="flex flex-col lg:flex-row flex-1 overflow-y-auto lg:overflow-hidden p-3 md:p-4 gap-4">
+            <div className="min-h-[500px] lg:min-h-0 flex-1 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
               {/* Header */}
-              <div className="p-6 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div className="p-4 md:p-6 border-b border-slate-200 flex items-center justify-between shrink-0">
                 <div>
                   <h2 className="text-lg font-extrabold text-slate-800 tracking-tight">Kelola Akun Pengguna</h2>
                   <p className="text-sm text-slate-500 mt-0.5">Buat, edit, dan kelola akun QC, KUPT, dan PPJ</p>
@@ -826,6 +1052,225 @@ export default function AdminPage() {
             </div>
           </div>
         )}
+
+        {/* ── SETTINGS VIEW ──────────────────────────────────── */}
+        {activeMenu === 'settings' && (
+          <div className="flex-1 overflow-y-auto p-4 md:p-8">
+            <div className="max-w-3xl mx-auto space-y-8">
+              {/* Settings Header */}
+              <div className="text-center md:text-left">
+                <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight flex items-center justify-center md:justify-start gap-3">
+                  <span className="material-symbols-outlined text-primary text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>settings</span>
+                  Pengaturan
+                </h2>
+                <p className="text-sm text-slate-500 mt-2">Kelola sirine darurat, kategori temuan, dan pengaturan sistem lainnya.</p>
+              </div>
+
+              {/* ── Section 1: Sirine ──────────────────────────────── */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center shrink-0">
+                    <span className="material-symbols-outlined text-rose-600 text-[22px]">notifications_active</span>
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-slate-800 text-[15px]">Pengaturan Sirine Darurat</h3>
+                    <p className="text-xs text-slate-500 truncate">Atur jenis suara alarm saat ada laporan darurat masuk</p>
+                  </div>
+                </div>
+                <div className="p-5 space-y-5">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-3">Pilih Jenis Sirine</label>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {([
+                        { value: 'off' as NotificationSound, label: 'Mati', icon: 'notifications_off', desc: 'Tidak ada suara' },
+                        { value: 'siren' as NotificationSound, label: 'Sirine', icon: 'emergency', desc: 'Suara sirine darurat' },
+                        { value: 'beep' as NotificationSound, label: 'Beep', icon: 'campaign', desc: 'Suara beep berulang' },
+                        { value: 'chime' as NotificationSound, label: 'Lonceng', icon: 'notifications', desc: 'Suara lonceng lembut' },
+                      ]).map(s => (
+                        <button
+                          key={s.value}
+                          onClick={() => {
+                            setAlertSound(s.value);
+                            localStorage.setItem('admin_alert_sound', s.value);
+                            if (s.value !== 'off') playNotification(s.value);
+                          }}
+                          className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all duration-200 min-h-[100px] ${
+                            alertSound === s.value
+                              ? s.value === 'off'
+                                ? 'border-slate-400 bg-slate-50 text-slate-700 shadow-md'
+                                : 'border-rose-500 bg-rose-50 text-rose-700 shadow-md shadow-rose-100'
+                              : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-slate-300'
+                          }`}
+                        >
+                          <span className="material-symbols-outlined text-[28px] mb-1.5" style={alertSound === s.value ? { fontVariationSettings: "'FILL' 1" } : {}}>{s.icon}</span>
+                          <span className="text-sm font-bold leading-tight">{s.label}</span>
+                          <span className="text-[10px] mt-1 opacity-70 leading-tight text-center">{s.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="bg-slate-50 rounded-xl p-4 flex items-start gap-3">
+                    <span className="material-symbols-outlined text-slate-400 text-[20px] mt-0.5 shrink-0">info</span>
+                    <div className="text-xs text-slate-600 leading-relaxed">
+                      <p className="font-semibold text-slate-700 mb-1">Bagaimana alarm bekerja?</p>
+                      <p>Saat petugas PPJ mengirim laporan darurat baru, sistem akan memutar suara alarm secara <strong>berulang (looping)</strong> hingga Anda menekan tombol &quot;Matikan Alarm&quot;. Sistem juga akan membacakan detail laporan melalui Text-to-Speech.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Section 2: Kategori Temuan ──────────────────── */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
+                      <span className="material-symbols-outlined text-blue-600 text-[22px]">category</span>
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="font-bold text-slate-800 text-[15px]">Kelola Kategori Temuan</h3>
+                      <p className="text-xs text-slate-500 truncate">Kategori yang tampil saat petugas membuat laporan kendala</p>
+                    </div>
+                  </div>
+                  {canWrite && (
+                    <button
+                      onClick={() => {
+                        setEditingKategori(null);
+                        setKategoriForm({ key: '', label: '', icon: 'warning', color: 'error' });
+                        setShowKategoriModal(true);
+                      }}
+                      className="flex items-center gap-1.5 px-4 py-2.5 bg-primary text-white text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-primary/90 transition-colors shadow-sm shrink-0"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">add</span>
+                      <span className="hidden sm:inline">Tambah</span>
+                    </button>
+                  )}
+                </div>
+                <div className="p-5">
+                  {kategoriList.length === 0 ? (
+                    <div className="text-center py-10">
+                      <span className="material-symbols-outlined text-slate-300 text-[48px]">category</span>
+                      <p className="text-sm text-slate-400 mt-2">Belum ada kategori. Tambahkan kategori pertama!</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {canWrite && kategoriList.length > 1 && (
+                        <p className="flex items-center gap-1.5 text-[11px] text-slate-400 mb-1">
+                          <span className="material-symbols-outlined text-[14px]">drag_indicator</span>
+                          Seret kartu untuk mengatur urutan tampil di petugas
+                          {reorderingKategori && <span className="text-primary font-medium">· menyimpan…</span>}
+                        </p>
+                      )}
+                      {kategoriList.map(k => (
+                        <div
+                          key={k.id}
+                          draggable={canWrite}
+                          onDragStart={() => canWrite && setDragKategoriId(k.id)}
+                          onDragEnd={() => { setDragKategoriId(null); setDragOverKategoriId(null); }}
+                          onDragOver={e => { if (canWrite && dragKategoriId != null) { e.preventDefault(); setDragOverKategoriId(k.id); } }}
+                          onDrop={e => { if (canWrite) { e.preventDefault(); handleKategoriDrop(k.id); } }}
+                          className={`flex items-center justify-between p-4 rounded-xl border transition-all ${canWrite ? 'cursor-grab active:cursor-grabbing' : ''} ${
+                            dragKategoriId === k.id ? 'opacity-40' : ''
+                          } ${
+                            dragOverKategoriId === k.id && dragKategoriId !== k.id ? 'ring-2 ring-primary ring-offset-1' : ''
+                          } ${
+                            k.isActive
+                              ? k.color === 'error'
+                                ? 'bg-rose-50/50 border-rose-200 hover:shadow-sm'
+                                : 'bg-blue-50/50 border-blue-200 hover:shadow-sm'
+                              : 'bg-slate-50 border-slate-200 opacity-60'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            {canWrite && (
+                              <span className="material-symbols-outlined text-[18px] text-slate-300 shrink-0 -ml-1" title="Seret untuk mengurutkan">drag_indicator</span>
+                            )}
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                              k.color === 'error' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'
+                            }`}>
+                              <span className="material-symbols-outlined text-[22px]">{k.icon}</span>
+                            </div>
+                            <div className="min-w-0">
+                              <p className={`text-sm font-bold truncate ${k.isActive ? 'text-slate-800' : 'text-slate-400 line-through'}`}>{k.label}</p>
+                              <p className="text-[10px] text-slate-400 font-mono truncate">{k.key}</p>
+                            </div>
+                            {!k.isActive && (
+                              <span className="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-slate-200 text-slate-500 shrink-0">Nonaktif</span>
+                            )}
+                          </div>
+                          {canWrite && (
+                            <div className="flex items-center gap-1 shrink-0 ml-2">
+                              <button
+                                onClick={() => {
+                                  setEditingKategori(k);
+                                  setKategoriForm({ key: k.key, label: k.label, icon: k.icon, color: k.color });
+                                  setShowKategoriModal(true);
+                                }}
+                                className="p-2 rounded-lg hover:bg-white text-slate-500 hover:text-primary transition-colors"
+                                title="Edit kategori"
+                              >
+                                <span className="material-symbols-outlined text-[18px]">edit</span>
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  if (!(await showConfirm(`Hapus kategori "${k.label}"? Tindakan ini permanen.`))) return;
+                                  try {
+                                    await api.delete(`/admin/kategori-temuan/${k.id}`);
+                                    fetchKategori();
+                                    showToast('Kategori dihapus', 'success');
+                                  } catch (err: unknown) {
+                                    showToast(getApiErrorMessage(err, 'Gagal menghapus'), 'error');
+                                  }
+                                }}
+                                className="p-2 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors"
+                                title="Hapus kategori"
+                              >
+                                <span className="material-symbols-outlined text-[18px]">delete</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ── Section 3: Info Sistem ──────────────────────── */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center shrink-0">
+                    <span className="material-symbols-outlined text-slate-600 text-[22px]">info</span>
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-slate-800 text-[15px]">Informasi Sistem</h3>
+                    <p className="text-xs text-slate-500 truncate">Detail aplikasi dan sesi Anda saat ini</p>
+                  </div>
+                </div>
+                <div className="p-5">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="bg-slate-50 rounded-xl p-4 flex flex-col">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Aplikasi</p>
+                      <p className="text-sm font-bold text-slate-800 leading-snug">KAI RailTrack PPJ</p>
+                      <p className="text-xs text-slate-500 mt-auto pt-1">v1.0.0 — DAOP 6 Yogyakarta</p>
+                    </div>
+                    <div className="bg-slate-50 rounded-xl p-4 flex flex-col">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Login Sebagai</p>
+                      <p className="text-sm font-bold text-slate-800 leading-snug">{user?.nama || '-'}</p>
+                      <p className="text-xs text-slate-500 mt-auto pt-1">Role: {ROLE_LABEL[userRole] || userRole}</p>
+                    </div>
+                    <div className="bg-slate-50 rounded-xl p-4 flex flex-col">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Statistik</p>
+                      <p className="text-sm font-bold text-slate-800 leading-snug">{stats?.totalPetugas ?? '-'} Petugas</p>
+                      <p className="text-xs text-slate-500 mt-auto pt-1">{kategoriList.filter(k => k.isActive).length} kategori aktif</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
+
       </div>
 
       {/* Create/Edit User Modal (Admin Only) */}
@@ -912,6 +1357,9 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+
+
+
 
       {/* Emergency Detail Modal */}
       {selectedEmergency && (
@@ -1343,6 +1791,115 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+
+      {/* ═══ KATEGORI TEMUAN MODAL ═══ */}
+      {showKategoriModal && (
+        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-slate-800 px-6 py-4 flex items-center justify-between shrink-0">
+              <h3 className="text-base font-bold text-white flex items-center gap-3 tracking-wide">
+                <span className="material-symbols-outlined text-rose-400 text-[20px]">category</span>
+                {editingKategori ? 'EDIT KATEGORI' : 'TAMBAH KATEGORI'}
+              </h3>
+              <button onClick={() => setShowKategoriModal(false)} className="text-slate-400 hover:text-white transition-colors">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="overflow-y-auto p-6 space-y-5 flex-1">
+              {/* Key */}
+              {!editingKategori && (
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Key (Unik, tanpa spasi)</label>
+                  <input
+                    value={kategoriForm.key}
+                    onChange={e => setKategoriForm(f => ({ ...f, key: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') }))}
+                    className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-mono"
+                    placeholder="contoh: patah_rel"
+                  />
+                </div>
+              )}
+              {/* Label */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Label (Tampil di UI)</label>
+                <input
+                  value={kategoriForm.label}
+                  onChange={e => setKategoriForm(f => ({ ...f, label: e.target.value }))}
+                  className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm"
+                  placeholder="contoh: Patah Rel"
+                />
+              </div>
+              {/* Color */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Warna Kategori</label>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setKategoriForm(f => ({ ...f, color: 'error' }))}
+                    className={`flex-1 py-3 rounded-xl border-2 text-sm font-bold flex items-center justify-center gap-2 transition-all ${kategoriForm.color === 'error' ? 'border-rose-500 bg-rose-50 text-rose-700 shadow-md' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'}`}
+                  >
+                    <div className="w-4 h-4 rounded-full bg-rose-500"></div> Darurat (Merah)
+                  </button>
+                  <button
+                    onClick={() => setKategoriForm(f => ({ ...f, color: 'primary' }))}
+                    className={`flex-1 py-3 rounded-xl border-2 text-sm font-bold flex items-center justify-center gap-2 transition-all ${kategoriForm.color === 'primary' ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-md' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'}`}
+                  >
+                    <div className="w-4 h-4 rounded-full bg-blue-500"></div> Normal (Biru)
+                  </button>
+                </div>
+              </div>
+              {/* Icon Picker */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Pilih Ikon</label>
+                <div className="grid grid-cols-5 gap-2">
+                  {ICON_OPTIONS.map(icon => (
+                    <button
+                      key={icon}
+                      onClick={() => setKategoriForm(f => ({ ...f, icon }))}
+                      className={`flex flex-col items-center justify-center py-3 rounded-xl border-2 transition-all ${kategoriForm.icon === icon ? 'border-primary bg-primary/5 text-primary shadow-md' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-slate-300'}`}
+                    >
+                      <span className="material-symbols-outlined text-[24px]">{icon}</span>
+                      <span className="text-[8px] font-medium mt-1 truncate w-full text-center px-1">{icon.replace(/_/g, ' ')}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            {/* Footer */}
+            <div className="p-5 border-t border-slate-200 flex gap-3 shrink-0 bg-white">
+              <button onClick={() => setShowKategoriModal(false)} className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 transition-colors uppercase tracking-wider">Batal</button>
+              <button
+                disabled={savingKategori || !kategoriForm.label || (!editingKategori && !kategoriForm.key)}
+                onClick={async () => {
+                  try {
+                    setSavingKategori(true);
+                    if (editingKategori) {
+                      await api.patch(`/admin/kategori-temuan/${editingKategori.id}`, {
+                        label: kategoriForm.label,
+                        icon: kategoriForm.icon,
+                        color: kategoriForm.color,
+                      });
+                      showToast('Kategori berhasil diperbarui', 'success');
+                    } else {
+                      await api.post('/admin/kategori-temuan', kategoriForm);
+                      showToast('Kategori berhasil ditambahkan', 'success');
+                    }
+                    setShowKategoriModal(false);
+                    fetchKategori();
+                  } catch (err: unknown) {
+                    showToast(getApiErrorMessage(err, 'Gagal menyimpan kategori'), 'error');
+                  } finally {
+                    setSavingKategori(false);
+                  }
+                }}
+                className="flex-[2] py-3 rounded-xl bg-primary text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-primary/20 hover:bg-primary/90 disabled:opacity-60 transition-all active:scale-[0.98] uppercase tracking-wider"
+              >
+                <span className="material-symbols-outlined text-[18px]">save</span>
+                {savingKategori ? 'Menyimpan...' : (editingKategori ? 'Simpan Perubahan' : 'Tambah Kategori')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
