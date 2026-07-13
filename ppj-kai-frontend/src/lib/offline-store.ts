@@ -7,7 +7,7 @@ interface PPJDB extends DBSchema {
       id?: number;
       url: string;
       method: 'POST' | 'PUT' | 'DELETE';
-      body: any;
+      body: unknown;
       headers?: Record<string, string>;
       timestamp: number;
     };
@@ -29,7 +29,7 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export async function addToOfflineQueue(url: string, method: 'POST' | 'PUT' | 'DELETE', body: any, headers?: Record<string, string>) {
+export async function addToOfflineQueue(url: string, method: 'POST' | 'PUT' | 'DELETE', body: unknown, headers?: Record<string, string>) {
   if (!dbPromise) return;
   const db = await dbPromise;
   await db.add('offlineQueue', {

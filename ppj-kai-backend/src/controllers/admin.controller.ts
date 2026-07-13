@@ -980,6 +980,32 @@ export const updateKategoriTemuan = async (req: AuthRequest, res: Response) => {
   }
 };
 
+// Batch reorder: persist a new ordering in one atomic transaction
+export const reorderKategoriTemuan = async (req: AuthRequest, res: Response) => {
+  try {
+    const { order } = req.body as { order?: number[] };
+
+    if (!Array.isArray(order) || order.length === 0 || !order.every(id => Number.isInteger(id))) {
+      return res.status(400).json({ success: false, message: 'Body harus berisi { order: number[] } dari id kategori' });
+    }
+
+    await prisma.$transaction(
+      order.map((id, index) =>
+        prisma.kategoriTemuan.update({
+          where: { id },
+          data: { sortOrder: index + 1 },
+        })
+      )
+    );
+
+    const data = await prisma.kategoriTemuan.findMany({ orderBy: { sortOrder: 'asc' } });
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Reorder kategori temuan error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
 export const deleteKategoriTemuan = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;

@@ -148,7 +148,7 @@ export default function QCPage() {
       // Build dynamic jenis label map
       if (katRes.data.data && katRes.data.data.length > 0) {
         const labels: Record<string, string> = {};
-        katRes.data.data.forEach((k: any) => { labels[k.key] = k.label; });
+        katRes.data.data.forEach((k: { key: string; label: string }) => { labels[k.key] = k.label; });
         setJenisLabel(labels);
       }
     } catch (e) {

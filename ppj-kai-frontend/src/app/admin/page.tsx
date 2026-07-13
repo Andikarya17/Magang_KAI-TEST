@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation';
 import { playNotification, NotificationSound, speakEmergencyAnnouncement, startLoopingNotification, stopLoopingNotification } from '../../lib/audio';
 import { showToast } from '../../lib/toast';
 import { showConfirm } from '../../lib/confirm';
+import { getApiErrorMessage } from '../../lib/utils';
 
 // Same deterministic color as AdminMap — NIPP → unique HSL color
 function petugasColor(nipp: string): string {
@@ -130,6 +131,10 @@ export default function AdminPage() {
   const [editingKategori, setEditingKategori] = useState<KategoriTemuan | null>(null);
   const [kategoriForm, setKategoriForm] = useState({ key: '', label: '', icon: 'warning', color: 'error' });
   const [savingKategori, setSavingKategori] = useState(false);
+  // Drag & drop reorder state
+  const [dragKategoriId, setDragKategoriId] = useState<number | null>(null);
+  const [dragOverKategoriId, setDragOverKategoriId] = useState<number | null>(null);
+  const [reorderingKategori, setReorderingKategori] = useState(false);
 
   // Derived label/color maps from kategoriList
   const JENIS_LABEL: Record<string, string> = React.useMemo(() => {
@@ -190,13 +195,6 @@ export default function AdminPage() {
     setIsAlarmActive(false);
   };
 
-  const handleSoundChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const sound = e.target.value as NotificationSound;
-    setAlertSound(sound);
-    localStorage.setItem('admin_alert_sound', sound);
-    playNotification(sound); // Preview the sound (single play, not looping)
-  };
-
   const fetchAvailablePetugas = async () => {
     try {
       const res = await api.get('/admin/petugas/available');
@@ -225,6 +223,36 @@ export default function AdminPage() {
       setKategoriList(res.data.data);
     } catch (e) { console.error(e); }
   }, []);
+
+  // Persist a reordered list (drag & drop). Optimistic update with rollback on failure.
+  const persistKategoriOrder = useCallback(async (ordered: KategoriTemuan[]) => {
+    const previous = kategoriList;
+    setKategoriList(ordered);
+    setReorderingKategori(true);
+    try {
+      await api.patch('/admin/kategori-temuan/reorder', { order: ordered.map(k => k.id) });
+    } catch (err: unknown) {
+      setKategoriList(previous);
+      showToast(getApiErrorMessage(err, 'Gagal menyimpan urutan'), 'error');
+    } finally {
+      setReorderingKategori(false);
+    }
+  }, [kategoriList]);
+
+  // Drop `dragKategoriId` at the position of `targetId`
+  const handleKategoriDrop = useCallback((targetId: number) => {
+    setDragOverKategoriId(null);
+    const sourceId = dragKategoriId;
+    setDragKategoriId(null);
+    if (sourceId == null || sourceId === targetId) return;
+    const list = [...kategoriList];
+    const from = list.findIndex(k => k.id === sourceId);
+    const to = list.findIndex(k => k.id === targetId);
+    if (from === -1 || to === -1) return;
+    const [moved] = list.splice(from, 1);
+    list.splice(to, 0, moved);
+    persistKategoriOrder(list);
+  }, [dragKategoriId, kategoriList, persistKategoriOrder]);
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -290,7 +318,7 @@ export default function AdminPage() {
       }
       setShowUserModal(false);
       fetchUsers();
-    } catch (e: any) { showToast(e.response?.data?.message || 'Gagal menyimpan akun.', 'error'); }
+    } catch (e: unknown) { showToast(getApiErrorMessage(e, 'Gagal menyimpan akun.'), 'error'); }
     finally { setSavingUser(false); }
   };
   const handleToggleUserActive = async (u: ManagedUser) => {
@@ -303,7 +331,7 @@ export default function AdminPage() {
         await api.patch(`/admin/users/${u.id}`, { isActive: true });
       }
       fetchUsers();
-    } catch (e: any) { showToast(e.response?.data?.message || 'Gagal.', 'error'); }
+    } catch (e: unknown) { showToast(getApiErrorMessage(e, 'Gagal.'), 'error'); }
   };
 
   // Station dropdown handlers
@@ -363,7 +391,7 @@ export default function AdminPage() {
       setShowTaskModal(false);
       setForm({ jalur: '', tanggal: '', assignedTo: '', startPointName: '', endPointName: '', startPointLat: '', startPointLong: '', endPointLat: '', endPointLong: '', jamMulai: '', jamSelesai: '' });
       fetchAll();
-    } catch (e: any) { console.error(e); showToast(e.response?.data?.message || 'Gagal membuat tugas.', 'error'); }
+    } catch (e: unknown) { console.error(e); showToast(getApiErrorMessage(e, 'Gagal membuat tugas.'), 'error'); }
     finally { setSubmitting(false); }
   };
 
@@ -381,8 +409,8 @@ export default function AdminPage() {
       setShowAddPetugasModal(false);
       setSelectedNipps([]);
       fetchAll();
-    } catch (e: any) {
-      showToast(e.response?.data?.message || 'Gagal menambahkan petugas.', 'error');
+    } catch (e: unknown) {
+      showToast(getApiErrorMessage(e, 'Gagal menambahkan petugas.'), 'error');
     } finally {
       setAddingPetugas(false);
     }
@@ -393,8 +421,8 @@ export default function AdminPage() {
     try {
       await api.post('/admin/petugas/remove', { id });
       fetchAll();
-    } catch (e: any) {
-      showToast(e.response?.data?.message || 'Gagal menghapus petugas.', 'error');
+    } catch (e: unknown) {
+      showToast(getApiErrorMessage(e, 'Gagal menghapus petugas.'), 'error');
     }
   };
 
@@ -410,8 +438,8 @@ export default function AdminPage() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-    } catch (e: any) {
-      showToast(e.response?.data?.message || 'Gagal mengunduh template.', 'error');
+    } catch (e: unknown) {
+      showToast(getApiErrorMessage(e, 'Gagal mengunduh template.'), 'error');
     }
   };
 
@@ -432,8 +460,8 @@ export default function AdminPage() {
       });
       setImportResult(res.data.data);
       fetchAll(); // Refresh task list
-    } catch (e: any) {
-      showToast(e.response?.data?.message || 'Gagal mengimpor file.', 'error');
+    } catch (e: unknown) {
+      showToast(getApiErrorMessage(e, 'Gagal mengimpor file.'), 'error');
     } finally {
       setImportLoading(false);
     }
@@ -958,6 +986,227 @@ export default function AdminPage() {
             </div>
           </div>
         )}
+
+        {/* ── SETTINGS VIEW ──────────────────────────────────── */}
+        {activeMenu === 'settings' && (
+          <div className="flex-1 overflow-y-auto p-4 md:p-8">
+            <div className="max-w-3xl mx-auto space-y-8">
+              {/* Settings Header */}
+              <div className="text-center md:text-left">
+                <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight flex items-center justify-center md:justify-start gap-3">
+                  <span className="material-symbols-outlined text-primary text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>settings</span>
+                  Pengaturan
+                </h2>
+                <p className="text-sm text-slate-500 mt-2">Kelola sirine darurat, kategori temuan, dan pengaturan sistem lainnya.</p>
+              </div>
+
+              {/* ── Section 1: Sirine ──────────────────────────────── */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center shrink-0">
+                    <span className="material-symbols-outlined text-rose-600 text-[22px]">notifications_active</span>
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-slate-800 text-[15px]">Pengaturan Sirine Darurat</h3>
+                    <p className="text-xs text-slate-500 truncate">Atur jenis suara alarm saat ada laporan darurat masuk</p>
+                  </div>
+                </div>
+                <div className="p-5 space-y-5">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-3">Pilih Jenis Sirine</label>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {([
+                        { value: 'off' as NotificationSound, label: 'Mati', icon: 'notifications_off', desc: 'Tidak ada suara' },
+                        { value: 'siren' as NotificationSound, label: 'Sirine', icon: 'emergency', desc: 'Suara sirine darurat' },
+                        { value: 'beep' as NotificationSound, label: 'Beep', icon: 'campaign', desc: 'Suara beep berulang' },
+                        { value: 'chime' as NotificationSound, label: 'Lonceng', icon: 'notifications', desc: 'Suara lonceng lembut' },
+                      ]).map(s => (
+                        <button
+                          key={s.value}
+                          onClick={() => {
+                            setAlertSound(s.value);
+                            localStorage.setItem('admin_alert_sound', s.value);
+                            if (s.value !== 'off') playNotification(s.value);
+                          }}
+                          className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all duration-200 min-h-[100px] ${
+                            alertSound === s.value
+                              ? s.value === 'off'
+                                ? 'border-slate-400 bg-slate-50 text-slate-700 shadow-md'
+                                : 'border-rose-500 bg-rose-50 text-rose-700 shadow-md shadow-rose-100'
+                              : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-slate-300'
+                          }`}
+                        >
+                          <span className="material-symbols-outlined text-[28px] mb-1.5" style={alertSound === s.value ? { fontVariationSettings: "'FILL' 1" } : {}}>{s.icon}</span>
+                          <span className="text-sm font-bold leading-tight">{s.label}</span>
+                          <span className="text-[10px] mt-1 opacity-70 leading-tight text-center">{s.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="bg-slate-50 rounded-xl p-4 flex items-start gap-3">
+                    <span className="material-symbols-outlined text-slate-400 text-[20px] mt-0.5 shrink-0">info</span>
+                    <div className="text-xs text-slate-600 leading-relaxed">
+                      <p className="font-semibold text-slate-700 mb-1">Bagaimana alarm bekerja?</p>
+                      <p>Saat petugas PPJ mengirim laporan darurat baru, sistem akan memutar suara alarm secara <strong>berulang (looping)</strong> hingga Anda menekan tombol &quot;Matikan Alarm&quot;. Sistem juga akan membacakan detail laporan melalui Text-to-Speech.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Section 2: Kategori Temuan ──────────────────── */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
+                      <span className="material-symbols-outlined text-blue-600 text-[22px]">category</span>
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="font-bold text-slate-800 text-[15px]">Kelola Kategori Temuan</h3>
+                      <p className="text-xs text-slate-500 truncate">Kategori yang tampil saat petugas membuat laporan kendala</p>
+                    </div>
+                  </div>
+                  {canWrite && (
+                    <button
+                      onClick={() => {
+                        setEditingKategori(null);
+                        setKategoriForm({ key: '', label: '', icon: 'warning', color: 'error' });
+                        setShowKategoriModal(true);
+                      }}
+                      className="flex items-center gap-1.5 px-4 py-2.5 bg-primary text-white text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-primary/90 transition-colors shadow-sm shrink-0"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">add</span>
+                      <span className="hidden sm:inline">Tambah</span>
+                    </button>
+                  )}
+                </div>
+                <div className="p-5">
+                  {kategoriList.length === 0 ? (
+                    <div className="text-center py-10">
+                      <span className="material-symbols-outlined text-slate-300 text-[48px]">category</span>
+                      <p className="text-sm text-slate-400 mt-2">Belum ada kategori. Tambahkan kategori pertama!</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {canWrite && kategoriList.length > 1 && (
+                        <p className="flex items-center gap-1.5 text-[11px] text-slate-400 mb-1">
+                          <span className="material-symbols-outlined text-[14px]">drag_indicator</span>
+                          Seret kartu untuk mengatur urutan tampil di petugas
+                          {reorderingKategori && <span className="text-primary font-medium">· menyimpan…</span>}
+                        </p>
+                      )}
+                      {kategoriList.map(k => (
+                        <div
+                          key={k.id}
+                          draggable={canWrite}
+                          onDragStart={() => canWrite && setDragKategoriId(k.id)}
+                          onDragEnd={() => { setDragKategoriId(null); setDragOverKategoriId(null); }}
+                          onDragOver={e => { if (canWrite && dragKategoriId != null) { e.preventDefault(); setDragOverKategoriId(k.id); } }}
+                          onDrop={e => { if (canWrite) { e.preventDefault(); handleKategoriDrop(k.id); } }}
+                          className={`flex items-center justify-between p-4 rounded-xl border transition-all ${canWrite ? 'cursor-grab active:cursor-grabbing' : ''} ${
+                            dragKategoriId === k.id ? 'opacity-40' : ''
+                          } ${
+                            dragOverKategoriId === k.id && dragKategoriId !== k.id ? 'ring-2 ring-primary ring-offset-1' : ''
+                          } ${
+                            k.isActive
+                              ? k.color === 'error'
+                                ? 'bg-rose-50/50 border-rose-200 hover:shadow-sm'
+                                : 'bg-blue-50/50 border-blue-200 hover:shadow-sm'
+                              : 'bg-slate-50 border-slate-200 opacity-60'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            {canWrite && (
+                              <span className="material-symbols-outlined text-[18px] text-slate-300 shrink-0 -ml-1" title="Seret untuk mengurutkan">drag_indicator</span>
+                            )}
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                              k.color === 'error' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'
+                            }`}>
+                              <span className="material-symbols-outlined text-[22px]">{k.icon}</span>
+                            </div>
+                            <div className="min-w-0">
+                              <p className={`text-sm font-bold truncate ${k.isActive ? 'text-slate-800' : 'text-slate-400 line-through'}`}>{k.label}</p>
+                              <p className="text-[10px] text-slate-400 font-mono truncate">{k.key}</p>
+                            </div>
+                            {!k.isActive && (
+                              <span className="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-slate-200 text-slate-500 shrink-0">Nonaktif</span>
+                            )}
+                          </div>
+                          {canWrite && (
+                            <div className="flex items-center gap-1 shrink-0 ml-2">
+                              <button
+                                onClick={() => {
+                                  setEditingKategori(k);
+                                  setKategoriForm({ key: k.key, label: k.label, icon: k.icon, color: k.color });
+                                  setShowKategoriModal(true);
+                                }}
+                                className="p-2 rounded-lg hover:bg-white text-slate-500 hover:text-primary transition-colors"
+                                title="Edit kategori"
+                              >
+                                <span className="material-symbols-outlined text-[18px]">edit</span>
+                              </button>
+                              {k.isActive && (
+                                <button
+                                  onClick={async () => {
+                                    if (!(await showConfirm(`Nonaktifkan kategori "${k.label}"?`))) return;
+                                    try {
+                                      await api.delete(`/admin/kategori-temuan/${k.id}`);
+                                      fetchKategori();
+                                      showToast('Kategori dinonaktifkan', 'success');
+                                    } catch (err: unknown) {
+                                      showToast(getApiErrorMessage(err, 'Gagal menghapus'), 'error');
+                                    }
+                                  }}
+                                  className="p-2 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors"
+                                  title="Nonaktifkan"
+                                >
+                                  <span className="material-symbols-outlined text-[18px]">delete</span>
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ── Section 3: Info Sistem ──────────────────────── */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center shrink-0">
+                    <span className="material-symbols-outlined text-slate-600 text-[22px]">info</span>
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-slate-800 text-[15px]">Informasi Sistem</h3>
+                    <p className="text-xs text-slate-500 truncate">Detail aplikasi dan sesi Anda saat ini</p>
+                  </div>
+                </div>
+                <div className="p-5">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="bg-slate-50 rounded-xl p-4 flex flex-col">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Aplikasi</p>
+                      <p className="text-sm font-bold text-slate-800 leading-snug">KAI RailTrack PPJ</p>
+                      <p className="text-xs text-slate-500 mt-auto pt-1">v1.0.0 — DAOP 6 Yogyakarta</p>
+                    </div>
+                    <div className="bg-slate-50 rounded-xl p-4 flex flex-col">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Login Sebagai</p>
+                      <p className="text-sm font-bold text-slate-800 leading-snug">{user?.nama || '-'}</p>
+                      <p className="text-xs text-slate-500 mt-auto pt-1">Role: {ROLE_LABEL[userRole] || userRole}</p>
+                    </div>
+                    <div className="bg-slate-50 rounded-xl p-4 flex flex-col">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Statistik</p>
+                      <p className="text-sm font-bold text-slate-800 leading-snug">{stats?.totalPetugas ?? '-'} Petugas</p>
+                      <p className="text-xs text-slate-500 mt-auto pt-1">{kategoriList.filter(k => k.isActive).length} kategori aktif</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
+
       </div>
 
       {/* Create/Edit User Modal (Admin Only) */}
@@ -1045,205 +1294,7 @@ export default function AdminPage() {
         </div>
       )}
 
-        {/* ── SETTINGS VIEW ──────────────────────────────────── */}
-        {activeMenu === 'settings' && (
-          <div className="flex-1 overflow-y-auto p-3 md:p-6">
-            <div className="max-w-3xl mx-auto space-y-6">
-              {/* Settings Header */}
-              <div>
-                <h2 className="text-xl font-extrabold text-slate-800 tracking-tight flex items-center gap-3">
-                  <span className="material-symbols-outlined text-primary text-[28px]">settings</span>
-                  Pengaturan
-                </h2>
-                <p className="text-sm text-slate-500 mt-1">Kelola sirine darurat, kategori temuan, dan pengaturan sistem lainnya.</p>
-              </div>
 
-              {/* ── Section 1: Sirine ──────────────────────────────── */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center">
-                    <span className="material-symbols-outlined text-rose-600 text-[22px]">notifications_active</span>
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-slate-800">Pengaturan Sirine Darurat</h3>
-                    <p className="text-xs text-slate-500">Atur jenis suara alarm saat ada laporan darurat masuk</p>
-                  </div>
-                </div>
-                <div className="p-6 space-y-5">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-3">Pilih Jenis Sirine</label>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      {([
-                        { value: 'off' as NotificationSound, label: 'Mati', icon: 'notifications_off', desc: 'Tidak ada suara' },
-                        { value: 'siren' as NotificationSound, label: 'Sirine', icon: 'emergency', desc: 'Suara sirine darurat' },
-                        { value: 'beep' as NotificationSound, label: 'Beep', icon: 'campaign', desc: 'Suara beep berulang' },
-                        { value: 'chime' as NotificationSound, label: 'Lonceng', icon: 'notifications', desc: 'Suara lonceng lembut' },
-                      ]).map(s => (
-                        <button
-                          key={s.value}
-                          onClick={() => {
-                            setAlertSound(s.value);
-                            localStorage.setItem('admin_alert_sound', s.value);
-                            if (s.value !== 'off') playNotification(s.value);
-                          }}
-                          className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all duration-200 ${
-                            alertSound === s.value
-                              ? s.value === 'off'
-                                ? 'border-slate-400 bg-slate-50 text-slate-700 shadow-md'
-                                : 'border-rose-500 bg-rose-50 text-rose-700 shadow-md shadow-rose-100'
-                              : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-slate-300'
-                          }`}
-                        >
-                          <span className="material-symbols-outlined text-[28px] mb-1" style={alertSound === s.value ? { fontVariationSettings: "'FILL' 1" } : {}}>{s.icon}</span>
-                          <span className="text-sm font-bold">{s.label}</span>
-                          <span className="text-[10px] mt-0.5 opacity-70">{s.desc}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="bg-slate-50 rounded-xl p-4 flex items-start gap-3">
-                    <span className="material-symbols-outlined text-slate-400 text-[20px] mt-0.5">info</span>
-                    <div className="text-xs text-slate-600 leading-relaxed">
-                      <p className="font-semibold text-slate-700 mb-1">Bagaimana alarm bekerja?</p>
-                      <p>Saat petugas PPJ mengirim laporan darurat baru, sistem akan memutar suara alarm secara <strong>berulang (looping)</strong> hingga Anda menekan tombol &quot;Matikan Alarm&quot;. Sistem juga akan membacakan detail laporan melalui Text-to-Speech.</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Section 2: Kategori Temuan ──────────────────── */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
-                      <span className="material-symbols-outlined text-blue-600 text-[22px]">category</span>
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-slate-800">Kelola Kategori Temuan</h3>
-                      <p className="text-xs text-slate-500">Kategori yang tampil saat petugas membuat laporan kendala</p>
-                    </div>
-                  </div>
-                  {canWrite && (
-                    <button
-                      onClick={() => {
-                        setEditingKategori(null);
-                        setKategoriForm({ key: '', label: '', icon: 'warning', color: 'error' });
-                        setShowKategoriModal(true);
-                      }}
-                      className="flex items-center gap-1.5 px-4 py-2.5 bg-primary text-white text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-primary/90 transition-colors shadow-sm"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">add</span> Tambah Kategori
-                    </button>
-                  )}
-                </div>
-                <div className="p-6">
-                  {kategoriList.length === 0 ? (
-                    <div className="text-center py-8">
-                      <span className="material-symbols-outlined text-slate-300 text-[48px]">category</span>
-                      <p className="text-sm text-slate-400 mt-2">Belum ada kategori. Tambahkan kategori pertama!</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {kategoriList.map(k => (
-                        <div
-                          key={k.id}
-                          className={`flex items-center justify-between p-4 rounded-xl border transition-all ${
-                            k.isActive
-                              ? k.color === 'error'
-                                ? 'bg-rose-50/50 border-rose-200 hover:shadow-sm'
-                                : 'bg-blue-50/50 border-blue-200 hover:shadow-sm'
-                              : 'bg-slate-50 border-slate-200 opacity-60'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                              k.color === 'error' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'
-                            }`}>
-                              <span className="material-symbols-outlined text-[22px]">{k.icon}</span>
-                            </div>
-                            <div>
-                              <p className={`text-sm font-bold ${k.isActive ? 'text-slate-800' : 'text-slate-400 line-through'}`}>{k.label}</p>
-                              <p className="text-[10px] text-slate-400 font-mono">{k.key}</p>
-                            </div>
-                            {!k.isActive && (
-                              <span className="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-slate-200 text-slate-500">Nonaktif</span>
-                            )}
-                          </div>
-                          {canWrite && (
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => {
-                                  setEditingKategori(k);
-                                  setKategoriForm({ key: k.key, label: k.label, icon: k.icon, color: k.color });
-                                  setShowKategoriModal(true);
-                                }}
-                                className="p-2 rounded-lg hover:bg-white text-slate-500 hover:text-primary transition-colors"
-                                title="Edit kategori"
-                              >
-                                <span className="material-symbols-outlined text-[18px]">edit</span>
-                              </button>
-                              {k.isActive && (
-                                <button
-                                  onClick={async () => {
-                                    if (!(await showConfirm(`Nonaktifkan kategori "${k.label}"?`))) return;
-                                    try {
-                                      await api.delete(`/admin/kategori-temuan/${k.id}`);
-                                      fetchKategori();
-                                      showToast('Kategori dinonaktifkan', 'success');
-                                    } catch (err: any) {
-                                      showToast(err.response?.data?.message || 'Gagal menghapus', 'error');
-                                    }
-                                  }}
-                                  className="p-2 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors"
-                                  title="Nonaktifkan"
-                                >
-                                  <span className="material-symbols-outlined text-[18px]">delete</span>
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* ── Section 3: Info Sistem ──────────────────────── */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center">
-                    <span className="material-symbols-outlined text-slate-600 text-[22px]">info</span>
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-slate-800">Informasi Sistem</h3>
-                    <p className="text-xs text-slate-500">Detail aplikasi dan sesi Anda saat ini</p>
-                  </div>
-                </div>
-                <div className="p-6">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="bg-slate-50 rounded-xl p-4">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Aplikasi</p>
-                      <p className="text-sm font-bold text-slate-800">KAI RailTrack PPJ</p>
-                      <p className="text-xs text-slate-500">v1.0.0 — DAOP 6 Yogyakarta</p>
-                    </div>
-                    <div className="bg-slate-50 rounded-xl p-4">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Login Sebagai</p>
-                      <p className="text-sm font-bold text-slate-800">{user?.nama || '-'}</p>
-                      <p className="text-xs text-slate-500">Role: {ROLE_LABEL[userRole] || userRole}</p>
-                    </div>
-                    <div className="bg-slate-50 rounded-xl p-4">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Statistik</p>
-                      <p className="text-sm font-bold text-slate-800">{stats?.totalPetugas ?? '-'} Petugas</p>
-                      <p className="text-xs text-slate-500">{kategoriList.filter(k => k.isActive).length} kategori aktif</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          </div>
-        )}
 
 
       {/* Emergency Detail Modal */}
@@ -1769,8 +1820,8 @@ export default function AdminPage() {
                     }
                     setShowKategoriModal(false);
                     fetchKategori();
-                  } catch (err: any) {
-                    showToast(err.response?.data?.message || 'Gagal menyimpan kategori', 'error');
+                  } catch (err: unknown) {
+                    showToast(getApiErrorMessage(err, 'Gagal menyimpan kategori'), 'error');
                   } finally {
                     setSavingKategori(false);
                   }

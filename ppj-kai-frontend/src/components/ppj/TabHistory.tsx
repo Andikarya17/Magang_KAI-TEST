@@ -240,7 +240,7 @@ export default function TabHistory({ tasks, loading }: TabHistoryProps) {
     api.get('/kategori-temuan').then(res => {
       if (res.data.data && res.data.data.length > 0) {
         const labels: Record<string, string> = {};
-        res.data.data.forEach((k: any) => { labels[k.key] = k.label; });
+        res.data.data.forEach((k: { key: string; label: string }) => { labels[k.key] = k.label; });
         setJenisLabels(labels);
       }
     }).catch(() => {});

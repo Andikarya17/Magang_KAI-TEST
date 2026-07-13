@@ -99,7 +99,7 @@ export default function DetailModal({ tugas, onClose }: DetailModalProps) {
       if (res.data.data && res.data.data.length > 0) {
         const labels: Record<string, string> = {};
         const colors: Record<string, string> = {};
-        res.data.data.forEach((k: any) => {
+        res.data.data.forEach((k: { key: string; label: string; color: string }) => {
           labels[k.key] = k.label;
           colors[k.key] = k.color === 'error' ? 'bg-error-container text-error' : 'bg-primary-container text-primary';
         });

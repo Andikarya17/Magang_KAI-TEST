@@ -7,6 +7,7 @@ import {
   getAllUsers, createUser, updateUser, deleteUser, getAllWilayah, getLivePositions,
   downloadTugasTemplate, importTugasFromExcel,
   getKategoriTemuan, createKategoriTemuan, updateKategoriTemuan, deleteKategoriTemuan,
+  reorderKategoriTemuan,
 } from '../controllers/admin.controller';
 
 // Multer memory storage for Excel file uploads
@@ -35,6 +36,7 @@ router.post('/tugas/import', requireAuth, requireCanWrite, upload.single('file')
 // ── Kategori Temuan CRUD — admin + kupt ──
 router.get('/kategori-temuan', requireAuth, requireAdminLike, getKategoriTemuan);
 router.post('/kategori-temuan', requireAuth, requireCanWrite, createKategoriTemuan);
+router.patch('/kategori-temuan/reorder', requireAuth, requireCanWrite, reorderKategoriTemuan);
 router.patch('/kategori-temuan/:id', requireAuth, requireCanWrite, updateKategoriTemuan);
 router.delete('/kategori-temuan/:id', requireAuth, requireCanWrite, deleteKategoriTemuan);
 

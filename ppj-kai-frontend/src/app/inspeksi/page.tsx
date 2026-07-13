@@ -15,6 +15,8 @@ interface Tugas {
   startPointLong: number;
   endPointLat: number;
   endPointLong: number;
+  jamMulai: string | null;
+  jamSelesai: string | null;
   status: string;
 }
 

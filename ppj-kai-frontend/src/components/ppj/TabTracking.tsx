@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import api from '../../lib/api';
 
@@ -45,6 +45,19 @@ function useGPS() {
   return { position, error };
 }
 
+interface TugasDetail {
+  status: string;
+  jalur: string;
+  tanggal: string;
+  jamMulai: string;
+  startPointLat: number;
+  startPointLong: number;
+  startPointName: string;
+  endPointLat: number;
+  endPointLong: number;
+  endPointName: string;
+}
+
 interface TabTrackingProps {
   tugasId: number | null;
   onFinish: () => void;
@@ -55,7 +68,7 @@ export default function TabTracking({ tugasId, onFinish, onBack }: TabTrackingPr
   const { position: gpsPos, error: gpsError } = useGPS();
 
   const [status, setStatus] = useState<'pending' | 'active'>('pending');
-  const [tugas, setTugas] = useState<any>(null);
+  const [tugas, setTugas] = useState<TugasDetail | null>(null);
   const [trackingId, setTrackingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [trackPath, setTrackPath] = useState<[number, number][]>([]);
@@ -94,7 +107,7 @@ export default function TabTracking({ tugasId, onFinish, onBack }: TabTrackingPr
 
   // Stop Confirmation Modal
   const [showStopModal, setShowStopModal] = useState(false);
-  const [endVerified, setEndVerified] = useState(false);
+  const [, setEndVerified] = useState(false);
   const [endSelfieDataUrl, setEndSelfieDataUrl] = useState<string | null>(null);
   const endVideoRef = useRef<HTMLVideoElement>(null);
   const endStreamRef = useRef<MediaStream | null>(null);
@@ -111,7 +124,7 @@ export default function TabTracking({ tugasId, onFinish, onBack }: TabTrackingPr
   useEffect(() => {
     api.get('/kategori-temuan').then(res => {
       if (res.data.data && res.data.data.length > 0) {
-        setEmergencyCategories(res.data.data.map((k: any) => ({ key: k.key, icon: k.icon, label: k.label, color: k.color })));
+        setEmergencyCategories(res.data.data.map((k: { key: string; icon: string; label: string; color: string }) => ({ key: k.key, icon: k.icon, label: k.label, color: k.color })));
       }
     }).catch(() => { /* keep defaults */ });
   }, []);

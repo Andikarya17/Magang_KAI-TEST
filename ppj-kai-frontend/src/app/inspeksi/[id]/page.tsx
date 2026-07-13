@@ -1,7 +1,7 @@
 // Force Next.js rebuild
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
@@ -9,6 +9,26 @@ import api from '../../../lib/api';
 import { showToast } from '../../../lib/toast';
 
 const DynamicMap = dynamic(() => import('../../../components/map/DynamicMap'), { ssr: false });
+
+interface Tugas {
+  status: string;
+  jalur: string;
+  tanggal: string;
+  jamMulai: string;
+  startPointLat: number;
+  startPointLong: number;
+  endPointLat: number;
+  endPointLong: number;
+  startPointName: string;
+  endPointName: string;
+}
+
+interface EmergencyCategory {
+  key: string;
+  icon: string;
+  label: string;
+  color: string;
+}
 
 // GPS Hook with improved accuracy and reliability
 function useGPS() {
@@ -54,7 +74,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const { position: gpsPos, error: gpsError } = useGPS();
 
   const [status, setStatus] = useState<'pending' | 'active'>('pending');
-  const [tugas, setTugas] = useState<any>(null);
+  const [tugas, setTugas] = useState<Tugas | null>(null);
   const [trackingId, setTrackingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [trackPath, setTrackPath] = useState<[number, number][]>([]);
@@ -93,7 +113,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
 
   // Stop Confirmation Modal
   const [showStopModal, setShowStopModal] = useState(false);
-  const [endVerified, setEndVerified] = useState(false);
+  const [, setEndVerified] = useState(false);
   const [endSelfieDataUrl, setEndSelfieDataUrl] = useState<string | null>(null);
   const endVideoRef = useRef<HTMLVideoElement>(null);
   const endStreamRef = useRef<MediaStream | null>(null);
@@ -110,7 +130,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     api.get('/kategori-temuan').then(res => {
       if (res.data.data && res.data.data.length > 0) {
-        setEmergencyCategories(res.data.data.map((k: any) => ({ key: k.key, icon: k.icon, label: k.label, color: k.color })));
+        setEmergencyCategories(res.data.data.map((k: EmergencyCategory) => ({ key: k.key, icon: k.icon, label: k.label, color: k.color })));
       }
     }).catch(() => { /* keep defaults */ });
   }, []);

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import api from '../../../../lib/api';
 import { showToast } from '../../../../lib/toast';
+import { getApiErrorMessage } from '../../../../lib/utils';
 
 const DynamicMap = dynamic(() => import('../../../../components/map/DynamicMap'), { ssr: false });
 
@@ -110,7 +111,7 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
       if (res.data.data && res.data.data.length > 0) {
         const labels: Record<string, string> = {};
         const colors: Record<string, string> = {};
-        res.data.data.forEach((k: any) => {
+        res.data.data.forEach((k: { key: string; label: string; color: string }) => {
           labels[k.key] = k.label;
           colors[k.key] = COLOR_MAP[k.color] || DEFAULT_COLOR_CLASS;
         });
@@ -132,9 +133,9 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Download PDF error:', err);
-      showToast(err.response?.data?.message || 'Gagal mengunduh laporan PDF.', 'error');
+      showToast(getApiErrorMessage(err, 'Gagal mengunduh laporan PDF.'), 'error');
     } finally {
       setIsDownloading(false);
     }

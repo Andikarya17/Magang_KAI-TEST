@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import api from '../../lib/api';
+import { getApiErrorMessage } from '../../lib/utils';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -37,8 +38,8 @@ export default function RegisterPage() {
           : '/inspeksi';
         router.push(dest);
       }
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Gagal registrasi. Silakan coba lagi.');
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Gagal registrasi. Silakan coba lagi.'));
     } finally {
       setIsLoading(false);
     }

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import api from '../../lib/api';
+import { getApiErrorMessage } from '../../lib/utils';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -60,8 +61,8 @@ export default function LoginPage() {
           : '/inspeksi';
         router.push(dest);
       }
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Gagal login. Periksa NIPP dan Password.');
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Gagal login. Periksa NIPP dan Password.'));
     } finally {
       setIsLoading(false);
     }
