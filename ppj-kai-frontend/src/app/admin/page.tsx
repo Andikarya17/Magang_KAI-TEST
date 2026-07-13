@@ -445,6 +445,7 @@ export default function AdminPage() {
   };
 
   // Excel import/export handlers
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleDownloadTemplate = async () => {
     try {
       const res = await api.get('/admin/tugas/template', { responseType: 'blob' });
