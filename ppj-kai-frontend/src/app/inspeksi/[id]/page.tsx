@@ -176,10 +176,13 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
       const data = res.data.data;
       setTugas(data);
 
-      // If already completed, redirect directly to selesai
+      // If already completed or missed, redirect or show status
       if (data?.status === 'completed') {
         router.replace(`/inspeksi/${params.id}/selesai`);
         return;
+      }
+      if (data?.status === 'missed') {
+        // Stay on page but don't allow tracking
       }
 
       // If tugas is in_progress, ALWAYS try to restore tracking from backend
@@ -216,19 +219,6 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const handleStartTracking = async () => {
     if (!gpsPos) { showToast('Menunggu sinyal GPS...', 'warning'); return; }
 
-    // Validasi jadwal inspeksi
-    if (tugas?.tanggal && tugas?.jamMulai) {
-      const jadwal = new Date(tugas.tanggal);
-      const [hh, mm] = tugas.jamMulai.split(':');
-      jadwal.setHours(parseInt(hh, 10), parseInt(mm, 10), 0, 0);
-      
-      if (Date.now() < jadwal.getTime()) {
-        const waktuTampil = jadwal.toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' });
-        showToast(`Belum waktunya inspeksi! Jadwal Anda: ${waktuTampil}`, 'error');
-        return;
-      }
-    }
-
     try {
       const res = await api.post(`/tracking/start/${params.id}`, { lat: gpsPos.lat, lng: gpsPos.lng, fotoAwal: selfieDataUrl });
       const newTrackingId = res.data.trackingId;
@@ -246,9 +236,10 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
         startedAt,
         trackPath: initialPath,
       }));
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to start tracking', err);
-      showToast('Gagal memulai inspeksi.', 'error');
+      const msg = err?.response?.data?.message || 'Gagal memulai inspeksi.';
+      showToast(msg, 'error');
     }
   };
 
@@ -454,6 +445,44 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     : null;
   const withinEndGeofence = testMode || (distanceToEnd !== null && distanceToEnd <= GEOFENCE_RADIUS);
 
+  // Time-window logic: 1 hour before jam_mulai → 1 hour after jam_mulai
+  const isMissed = tugas?.status === 'missed';
+  let timeWindowStatus: 'too_early' | 'within' | 'too_late' | 'no_schedule' = 'no_schedule';
+  let windowOpenTimeStr = '';
+  let windowCloseTimeStr = '';
+  let scheduledTimeStr = '';
+
+  if (tugas?.tanggal && tugas?.jamMulai) {
+    const [twHours, twMinutes] = tugas.jamMulai.split(':').map(Number);
+    const tugasDate = new Date(tugas.tanggal);
+    const scheduledTimeUTC = new Date(Date.UTC(
+      tugasDate.getUTCFullYear(),
+      tugasDate.getUTCMonth(),
+      tugasDate.getUTCDate(),
+      twHours - 7,
+      twMinutes
+    ));
+    const windowStart = new Date(scheduledTimeUTC.getTime() - 60 * 60 * 1000);
+    const windowEnd = new Date(scheduledTimeUTC.getTime() + 60 * 60 * 1000);
+    const now = new Date();
+
+    scheduledTimeStr = tugas.jamMulai;
+    const wsWIB = new Date(windowStart.getTime() + 7 * 60 * 60 * 1000);
+    const weWIB = new Date(windowEnd.getTime() + 7 * 60 * 60 * 1000);
+    windowOpenTimeStr = wsWIB.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false });
+    windowCloseTimeStr = weWIB.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+    if (isMissed || now > windowEnd) {
+      timeWindowStatus = 'too_late';
+    } else if (now < windowStart) {
+      timeWindowStatus = 'too_early';
+    } else {
+      timeWindowStatus = 'within';
+    }
+  }
+
+  const isTimeBlocked = timeWindowStatus === 'too_early' || timeWindowStatus === 'too_late';
+
   if (loading) return (
     <div className="flex h-screen items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-md text-on-surface-variant">
@@ -500,7 +529,14 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
               <div className="flex items-center justify-between p-md">
                 <div className="flex items-center gap-sm">
                   <h2 className="font-h3 text-h3 text-on-surface">Inspection Setup</h2>
-                  <span className="bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm px-2 py-1 rounded-full uppercase tracking-wider">Pending</span>
+                  <span className={`font-label-sm text-label-sm px-2 py-1 rounded-full uppercase tracking-wider ${
+                    isMissed ? 'bg-rose-500/10 text-rose-600'
+                    : timeWindowStatus === 'too_late' ? 'bg-rose-500/10 text-rose-600'
+                    : timeWindowStatus === 'too_early' ? 'bg-surface-container-high text-on-surface-variant'
+                    : 'bg-primary-container/20 text-primary'
+                  }`}>
+                    {isMissed ? 'Tidak Selesai' : timeWindowStatus === 'too_late' ? 'Terlewat' : timeWindowStatus === 'too_early' ? 'Belum Waktunya' : 'Siap'}
+                  </span>
                 </div>
                 <button
                   onClick={() => setCardMinimized(m => !m)}
@@ -565,6 +601,41 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
                     </div>
                   )}
 
+                  {/* Schedule Info */}
+                  {scheduledTimeStr && (
+                    <div className={`rounded-lg p-sm border flex items-center gap-sm ${
+                      timeWindowStatus === 'within' ? 'bg-primary-container/10 border-primary/30'
+                      : timeWindowStatus === 'too_late' || isMissed ? 'bg-rose-50 border-rose-200'
+                      : 'bg-amber-50 border-amber-200'
+                    }`}>
+                      <span className={`material-symbols-outlined text-[20px] ${
+                        timeWindowStatus === 'within' ? 'text-primary'
+                        : timeWindowStatus === 'too_late' || isMissed ? 'text-rose-500'
+                        : 'text-amber-500'
+                      }`} style={{ fontVariationSettings: "'FILL' 1" }}>
+                        {timeWindowStatus === 'within' ? 'check_circle' : timeWindowStatus === 'too_late' || isMissed ? 'event_busy' : 'schedule'}
+                      </span>
+                      <div className="flex-1">
+                        <p className="font-label-sm text-[11px] text-on-surface-variant uppercase">Jadwal Inspeksi</p>
+                        <p className="font-data-heavy text-on-surface">{scheduledTimeStr} WIB</p>
+                        <p className={`font-label-sm text-[10px] ${
+                          timeWindowStatus === 'within' ? 'text-primary'
+                          : timeWindowStatus === 'too_late' || isMissed ? 'text-rose-500'
+                          : 'text-amber-600'
+                        }`}>
+                          {isMissed 
+                            ? 'Tugas tidak selesai — waktu tracking telah berakhir'
+                            : timeWindowStatus === 'too_late'
+                            ? `Waktu tracking berakhir pada ${windowCloseTimeStr} WIB`
+                            : timeWindowStatus === 'too_early' 
+                            ? `Tracking dibuka mulai ${windowOpenTimeStr} WIB`
+                            : `Tracking tersedia sampai ${windowCloseTimeStr} WIB`
+                          }
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Geofencing Distance */}
                   {distanceToStart !== null && (
                     <div className={`rounded-lg p-sm border ${withinGeofence ? 'bg-primary-container/10 border-primary/30' : 'bg-error-container/10 border-error/20'}`}>
@@ -610,18 +681,29 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
 
                   <button
                     onClick={handleStartTracking}
-                    disabled={!gpsPos || !withinGeofence}
-                    className={`w-full text-on-primary font-body-lg font-semibold h-[48px] rounded-lg flex items-center justify-center gap-sm shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all ${testMode ? 'bg-amber-500 hover:bg-amber-600' : 'bg-primary hover:bg-surface-tint'
+                    disabled={!gpsPos || !withinGeofence || isTimeBlocked}
+                    className={`w-full text-on-primary font-body-lg font-semibold h-[48px] rounded-lg flex items-center justify-center gap-sm shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all ${
+                      isTimeBlocked
+                        ? 'bg-slate-400'
+                        : testMode ? 'bg-amber-500 hover:bg-amber-600' : 'bg-primary hover:bg-surface-tint'
                       }`}
                   >
-                    <span className="material-symbols-outlined">play_circle</span>
-                    {!gpsPos
-                      ? 'Menunggu GPS...'
-                      : testMode
-                        ? 'Mulai Tracking (Test Mode)'
-                        : !withinGeofence
-                          ? `Mendekat ke Titik Awal (${Math.round(distanceToStart ?? 0)}m)`
-                          : 'Mulai Tracking'
+                    <span className="material-symbols-outlined">
+                      {isTimeBlocked ? (timeWindowStatus === 'too_late' ? 'event_busy' : 'lock_clock') : 'play_circle'}
+                    </span>
+                    {isMissed
+                      ? 'Tugas Tidak Selesai'
+                      : timeWindowStatus === 'too_late'
+                        ? 'Waktu Tracking Berakhir'
+                        : timeWindowStatus === 'too_early'
+                          ? `Dibuka Pukul ${windowOpenTimeStr} WIB`
+                          : !gpsPos
+                            ? 'Menunggu GPS...'
+                            : testMode
+                              ? 'Mulai Tracking (Test Mode)'
+                              : !withinGeofence
+                                ? `Mendekat ke Titik Awal (${Math.round(distanceToStart ?? 0)}m)`
+                                : 'Mulai Tracking'
                     }
                   </button>
                 </div>

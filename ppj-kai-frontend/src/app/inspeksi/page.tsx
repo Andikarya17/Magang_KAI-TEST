@@ -58,6 +58,7 @@ const statusLabel: Record<string, string> = {
   in_progress: 'Sedang Berlangsung',
   completed: 'Selesai',
   cancelled: 'Dibatalkan',
+  missed: 'Tidak Selesai',
 };
 
 const statusIcon: Record<string, string> = {
@@ -65,6 +66,7 @@ const statusIcon: Record<string, string> = {
   in_progress: 'directions_railway',
   completed: 'check_circle',
   cancelled: 'cancel',
+  missed: 'event_busy',
 };
 
 const statusStyle: Record<string, string> = {
@@ -72,6 +74,7 @@ const statusStyle: Record<string, string> = {
   in_progress: 'bg-primary-container/20 text-primary border-primary/30',
   completed: 'bg-green-500/10 text-green-600 border-green-500/30',
   cancelled: 'bg-error-container/20 text-error border-error/30',
+  missed: 'bg-rose-500/10 text-rose-600 border-rose-500/30',
 };
 
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
@@ -125,7 +128,7 @@ export default function InspeksiIndexPage() {
         const res = await api.get('/tugas');
         const allTasks: Tugas[] = res.data.data || [];
         // Filter: tugas aktif dan tugas selesai (riwayat)
-        const activeTasks = allTasks.filter(t => t.status === 'pending' || t.status === 'in_progress');
+        const activeTasks = allTasks.filter(t => t.status === 'pending' || t.status === 'in_progress' || t.status === 'missed');
         const completed = allTasks.filter(t => t.status === 'completed');
         setCompletedTasks(completed);
 
@@ -264,66 +267,92 @@ export default function InspeksiIndexPage() {
               tugas.endPointLat, tugas.endPointLong
             );
 
+          // Time-window: 1 hour before jam_mulai to 1 hour after jam_mulai
           let isBelumWaktunya = false;
-          if (tugas.tanggal && tugas.jamMulai) {
-            const jadwal = new Date(tugas.tanggal);
-            const [hh, mm] = tugas.jamMulai.split(':');
-            jadwal.setHours(parseInt(hh, 10), parseInt(mm, 10), 0, 0);
-            if (Date.now() < jadwal.getTime()) {
+          let isTerlewat = tugas.status === 'missed';
+          let windowOpenTimeStr = '';
+          if (tugas.tanggal && tugas.jamMulai && tugas.status !== 'missed') {
+            const [hh, mm] = tugas.jamMulai.split(':').map(Number);
+            const tugasDate = new Date(tugas.tanggal);
+            // Build scheduled time — tanggal from API is UTC midnight, jam_mulai is WIB
+            const scheduledTimeUTC = new Date(Date.UTC(
+              tugasDate.getUTCFullYear(),
+              tugasDate.getUTCMonth(),
+              tugasDate.getUTCDate(),
+              hh - 7, // WIB to UTC
+              mm
+            ));
+            const windowStart = new Date(scheduledTimeUTC.getTime() - 60 * 60 * 1000); // 1hr before
+            const windowEnd = new Date(scheduledTimeUTC.getTime() + 60 * 60 * 1000);   // 1hr after
+            const now = new Date();
+
+            if (now < windowStart) {
               isBelumWaktunya = true;
+              const wsWIB = new Date(windowStart.getTime() + 7 * 60 * 60 * 1000);
+              windowOpenTimeStr = wsWIB.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false });
+            } else if (now > windowEnd) {
+              isTerlewat = true;
             }
           }
 
-          const CardContainer = isBelumWaktunya ? 'div' : Link;
+          const isDisabled = isBelumWaktunya || isTerlewat;
+          const CardContainer = isDisabled ? 'div' : Link;
 
           return (
             <CardContainer
               key={tugas.id}
-              href={isBelumWaktunya ? '#' : `/inspeksi/${tugas.id}`}
+              href={isDisabled ? '#' : `/inspeksi/${tugas.id}`}
               className={`group relative bg-white/80 backdrop-blur-2xl border border-white/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-[28px] overflow-hidden flex flex-col ${
-                isBelumWaktunya 
+                isDisabled 
                   ? 'opacity-70 grayscale-[0.3] cursor-not-allowed' 
                   : 'hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all duration-300 hover:-translate-y-1.5'
               }`}
             >
               {/* Modern Status Gradient Accent */}
-              <div className={`absolute top-0 left-0 right-0 h-1.5 ${tugas.status === 'in_progress' ? 'bg-gradient-to-r from-primary to-blue-400' : (isBelumWaktunya ? 'bg-slate-300' : 'bg-gradient-to-r from-amber-400 to-amber-200')}`} />
+              <div className={`absolute top-0 left-0 right-0 h-1.5 ${
+                tugas.status === 'in_progress' ? 'bg-gradient-to-r from-primary to-blue-400' 
+                : isTerlewat ? 'bg-gradient-to-r from-rose-400 to-rose-200'
+                : isBelumWaktunya ? 'bg-slate-300' 
+                : 'bg-gradient-to-r from-amber-400 to-amber-200'
+              }`} />
 
               <div className="p-6 flex flex-col gap-6">
                 {/* Title & Status */}
                 <div className="flex justify-between items-start gap-4">
                   <div className="flex-1">
                     <div className="inline-flex items-center gap-1.5 mb-2">
-                      {!isBelumWaktunya && <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-pulse" />}
+                      {!isDisabled && <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-pulse" />}
                       <span className="text-[10px] font-bold tracking-[0.2em] text-slate-400 uppercase">Tugas Inspeksi</span>
                     </div>
                     <h2 className={`font-h2 text-xl font-extrabold leading-snug tracking-tight transition-colors ${
-                      isBelumWaktunya ? 'text-slate-500' : 'text-slate-800 group-hover:text-primary'
+                      isDisabled ? 'text-slate-500' : 'text-slate-800 group-hover:text-primary'
                     }`}>{tugas.jalur}</h2>
                   </div>
                   <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-2xl font-label-sm text-[11px] font-bold uppercase shrink-0 transition-colors ${
-                    isBelumWaktunya ? 'bg-slate-100 text-slate-400' : (statusStyle[tugas.status] ?? 'bg-surface-container text-on-surface-variant')
+                    isBelumWaktunya ? 'bg-slate-100 text-slate-400'
+                    : isTerlewat ? (statusStyle['missed'] ?? 'bg-rose-500/10 text-rose-600')
+                    : (statusStyle[tugas.status] ?? 'bg-surface-container text-on-surface-variant')
                   }`}>
                     <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                      {isBelumWaktunya ? 'lock_clock' : statusIcon[tugas.status]}
+                      {isBelumWaktunya ? 'lock_clock' : isTerlewat ? 'event_busy' : statusIcon[tugas.status]}
                     </span>
-                    {isBelumWaktunya ? 'Belum Waktunya' : (statusLabel[tugas.status] ?? tugas.status)}
+                    {isBelumWaktunya ? 'Belum Waktunya' : isTerlewat ? 'Tidak Selesai' : (statusLabel[tugas.status] ?? tugas.status)}
                   </span>
                 </div>
 
                 {/* Route Timeline */}
-                <div className={`bg-slate-50/70 rounded-2xl p-4 border border-slate-100/80 flex items-center gap-4 transition-colors ${isBelumWaktunya ? '' : 'group-hover:bg-primary/[0.02]'}`}>
+                <div className={`bg-slate-50/70 rounded-2xl p-4 border border-slate-100/80 flex items-center gap-4 transition-colors ${isDisabled ? '' : 'group-hover:bg-primary/[0.02]'}`}>
                   <div className="flex flex-col items-center justify-center shrink-0">
-                    <div className={`w-3 h-3 rounded-full relative z-10 ${isBelumWaktunya ? 'bg-slate-300' : 'bg-primary ring-4 ring-primary/15'}`} />
-                    <div className={`w-[2px] h-6 ${isBelumWaktunya ? 'bg-slate-200' : 'bg-gradient-to-b from-primary/30 to-error/30'}`} />
-                    <div className={`w-3 h-3 rounded-full relative z-10 ${isBelumWaktunya ? 'bg-slate-300' : 'bg-error ring-4 ring-error/15'}`} />
+                    <div className={`w-3 h-3 rounded-full relative z-10 ${isDisabled ? 'bg-slate-300' : 'bg-primary ring-4 ring-primary/15'}`} />
+                    <div className={`w-[2px] h-6 ${isDisabled ? 'bg-slate-200' : 'bg-gradient-to-b from-primary/30 to-error/30'}`} />
+                    <div className={`w-3 h-3 rounded-full relative z-10 ${isDisabled ? 'bg-slate-300' : 'bg-error ring-4 ring-error/15'}`} />
                   </div>
                   <div className="flex flex-col justify-between h-[52px] flex-1 py-0.5">
-                    <span className={`font-body-md text-[15px] font-bold leading-none ${isBelumWaktunya ? 'text-slate-400' : 'text-slate-700'}`}>{tugas.startPointName || 'Titik Awal'}</span>
-                    <span className={`font-body-md text-[15px] font-bold leading-none ${isBelumWaktunya ? 'text-slate-400' : 'text-slate-700'}`}>{tugas.endPointName || 'Titik Akhir'}</span>
+                    <span className={`font-body-md text-[15px] font-bold leading-none ${isDisabled ? 'text-slate-400' : 'text-slate-700'}`}>{tugas.startPointName || 'Titik Awal'}</span>
+                    <span className={`font-body-md text-[15px] font-bold leading-none ${isDisabled ? 'text-slate-400' : 'text-slate-700'}`}>{tugas.endPointName || 'Titik Akhir'}</span>
                   </div>
                   <div className="bg-white px-4 py-3 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center justify-center shrink-0 min-w-[72px]">
-                    <span className={`font-data-heavy text-xl leading-none mb-1 ${isBelumWaktunya ? 'text-slate-400' : 'text-primary'}`}>{distance.toFixed(1)}</span>
+                    <span className={`font-data-heavy text-xl leading-none mb-1 ${isDisabled ? 'text-slate-400' : 'text-primary'}`}>{distance.toFixed(1)}</span>
                     <span className="font-label-sm text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">KM</span>
                   </div>
                 </div>
@@ -347,12 +376,12 @@ export default function InspeksiIndexPage() {
                   </div>
                   
                   <div className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-all duration-300 ${
-                    isBelumWaktunya 
-                      ? 'bg-slate-200 text-slate-500 shadow-none' 
+                    isDisabled 
+                      ? isTerlewat ? 'bg-rose-100 text-rose-500 shadow-none' : 'bg-slate-200 text-slate-500 shadow-none' 
                       : 'bg-slate-900 text-white group-hover:bg-primary shadow-slate-900/10 group-hover:shadow-primary/25'
                   }`}>
-                    {isBelumWaktunya ? 'Belum Waktunya' : (tugas.status === 'in_progress' ? 'Lanjutkan' : 'Buka')}
-                    {!isBelumWaktunya && (
+                    {isBelumWaktunya ? `Dibuka ${windowOpenTimeStr}` : isTerlewat ? 'Terlewat' : (tugas.status === 'in_progress' ? 'Lanjutkan' : 'Buka')}
+                    {!isDisabled && (
                       <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform duration-300">arrow_forward</span>
                     )}
                   </div>
