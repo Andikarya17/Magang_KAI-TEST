@@ -87,8 +87,10 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const [isVerified, setIsVerified] = useState(false);
   const [verifyModalOpen, setVerifyModalOpen] = useState(false);
   const [selfieDataUrl, setSelfieDataUrl] = useState<string | null>(null);
+  const [cameraActive, setCameraActive] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Emergency Modal
   const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
@@ -115,8 +117,10 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const [showStopModal, setShowStopModal] = useState(false);
   const [, setEndVerified] = useState(false);
   const [endSelfieDataUrl, setEndSelfieDataUrl] = useState<string | null>(null);
+  const [endCameraActive, setEndCameraActive] = useState(false);
   const endVideoRef = useRef<HTMLVideoElement>(null);
   const endStreamRef = useRef<MediaStream | null>(null);
+  const endFileInputRef = useRef<HTMLInputElement>(null);
   const [isStopping, setIsStopping] = useState(false);
 
   // Dev test mode — bypass geofencing (localhost only)
@@ -210,7 +214,6 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   };
 
   const handleStartTracking = async () => {
-    if (!isVerified) { setVerifyModalOpen(true); return; }
     if (!gpsPos) { showToast('Menunggu sinyal GPS...', 'warning'); return; }
 
     // Validasi jadwal inspeksi
@@ -327,7 +330,10 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
       streamRef.current = stream;
-      if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
+      setCameraActive(true);
+      setTimeout(() => {
+        if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
+      }, 100);
     } catch { showToast('Tidak dapat mengakses kamera.', 'error'); }
   };
 
@@ -344,12 +350,25 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const stopCamera = () => {
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
+    setCameraActive(false);
+  };
+
+  const handleGalleryUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setSelfieDataUrl(reader.result as string);
+      stopCamera();
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const confirmVerification = () => {
-    if (!selfieDataUrl) { showToast('Silakan ambil foto terlebih dahulu.', 'warning'); return; }
     setIsVerified(true);
     setVerifyModalOpen(false);
+    stopCamera();
   };
 
   // End verification camera functions
@@ -357,6 +376,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
       endStreamRef.current = stream;
+      setEndCameraActive(true);
       setTimeout(() => {
         if (endVideoRef.current) { endVideoRef.current.srcObject = stream; endVideoRef.current.play(); }
       }, 100);
@@ -376,10 +396,22 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const stopEndCamera = () => {
     endStreamRef.current?.getTracks().forEach(t => t.stop());
     endStreamRef.current = null;
+    setEndCameraActive(false);
+  };
+
+  const handleEndGalleryUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setEndSelfieDataUrl(reader.result as string);
+      stopEndCamera();
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const confirmEndVerification = () => {
-    if (!endSelfieDataUrl) { showToast('Silakan ambil foto terlebih dahulu.', 'warning'); return; }
     setEndVerified(true);
   };
 
@@ -502,11 +534,11 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
 
                     {/* Verifikasi Identitas */}
                     <button
-                      onClick={() => { setVerifyModalOpen(true); openCamera(); }}
-                      className={`flex items-center justify-between p-sm rounded-lg border transition-colors focus:outline-none ${isVerified ? 'bg-surface-container-low border-outline-variant/30' : 'bg-surface-container-low hover:bg-surface-container border-error-container/50'}`}
+                      onClick={() => { setVerifyModalOpen(true); }}
+                      className={`flex items-center justify-between p-sm rounded-lg border transition-colors focus:outline-none ${isVerified ? 'bg-surface-container-low border-outline-variant/30' : 'bg-surface-container-low hover:bg-surface-container border-outline-variant/50'}`}
                     >
                       <div className="flex items-center gap-md">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isVerified ? 'bg-primary-container text-on-primary-container' : 'bg-error-container text-on-error-container'}`}>
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isVerified ? 'bg-primary-container text-on-primary-container' : 'bg-surface-container-high text-on-surface-variant'}`}>
                           <span className="material-symbols-outlined text-sm">{isVerified ? 'check' : 'photo_camera'}</span>
                         </div>
                         <span className="font-body-md text-body-md text-on-surface">Verifikasi Identitas</span>
@@ -514,8 +546,8 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
                       {isVerified ? (
                         <span className="text-primary font-label-sm text-label-sm uppercase flex items-center gap-xs">Terverifikasi ✓</span>
                       ) : (
-                        <span className="text-error font-label-sm text-label-sm uppercase flex items-center gap-xs">
-                          Wajib <span className="material-symbols-outlined text-[16px]">chevron_right</span>
+                        <span className="text-on-surface-variant font-label-sm text-label-sm uppercase flex items-center gap-xs">
+                          Opsional <span className="material-symbols-outlined text-[16px]">chevron_right</span>
                         </span>
                       )}
                     </button>
@@ -648,22 +680,47 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
               </button>
             </div>
             <div className="p-md flex flex-col gap-md">
-              {/* Camera preview or captured photo */}
-              {!selfieDataUrl ? (
+              {/* Hidden file input for gallery */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleGalleryUpload}
+              />
+              {/* Camera preview, captured photo, or choose options */}
+              {selfieDataUrl ? (
+                <div className="relative w-full aspect-[4/3] rounded-xl overflow-hidden">
+                  <img src={selfieDataUrl} alt="Selfie" className="w-full h-full object-cover" />
+                  <button onClick={() => { setSelfieDataUrl(null); }} className="absolute top-2 right-2 bg-surface/80 backdrop-blur-sm rounded-full p-1.5">
+                    <span className="material-symbols-outlined text-error">refresh</span>
+                  </button>
+                </div>
+              ) : cameraActive ? (
                 <div className="relative w-full aspect-[4/3] bg-black rounded-xl overflow-hidden">
                   <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-                  <div className="absolute bottom-3 left-0 right-0 flex justify-center">
+                  <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-md">
                     <button onClick={capturePhoto} className="w-16 h-16 bg-white rounded-full border-4 border-primary shadow-lg flex items-center justify-center active:scale-90 transition-transform">
                       <span className="material-symbols-outlined text-primary text-[32px]">photo_camera</span>
+                    </button>
+                    <button onClick={stopCamera} className="w-10 h-10 bg-surface/80 backdrop-blur rounded-full flex items-center justify-center self-center">
+                      <span className="material-symbols-outlined text-error text-[20px]">close</span>
                     </button>
                   </div>
                 </div>
               ) : (
-                <div className="relative w-full aspect-[4/3] rounded-xl overflow-hidden">
-                  <img src={selfieDataUrl} alt="Selfie" className="w-full h-full object-cover" />
-                  <button onClick={() => { setSelfieDataUrl(null); openCamera(); }} className="absolute top-2 right-2 bg-surface/80 backdrop-blur-sm rounded-full p-1.5">
-                    <span className="material-symbols-outlined text-error">refresh</span>
-                  </button>
+                <div className="flex flex-col gap-sm">
+                  <p className="font-body-md text-body-md text-on-surface-variant text-center">Ambil foto selfie untuk verifikasi identitas (opsional)</p>
+                  <div className="flex gap-sm">
+                    <button onClick={openCamera} className="flex-1 h-28 rounded-xl border-2 border-dashed border-primary/40 bg-primary-container/10 flex flex-col items-center justify-center text-primary hover:bg-primary-container/20 transition-colors cursor-pointer gap-1">
+                      <span className="material-symbols-outlined text-[32px]">photo_camera</span>
+                      <span className="font-label-sm text-label-sm">Buka Kamera</span>
+                    </button>
+                    <button onClick={() => fileInputRef.current?.click()} className="flex-1 h-28 rounded-xl border-2 border-dashed border-primary/40 bg-primary-container/10 flex flex-col items-center justify-center text-primary hover:bg-primary-container/20 transition-colors cursor-pointer gap-1">
+                      <span className="material-symbols-outlined text-[32px]">photo_library</span>
+                      <span className="font-label-sm text-label-sm">Pilih dari Galeri</span>
+                    </button>
+                  </div>
                 </div>
               )}
               {/* GPS info */}
@@ -678,8 +735,8 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
               <button onClick={() => { setVerifyModalOpen(false); stopCamera(); setSelfieDataUrl(null); }} className="flex-1 py-3 rounded-xl border border-outline text-on-surface font-label-sm hover:bg-surface-container-low">
                 Batal
               </button>
-              <button onClick={confirmVerification} disabled={!selfieDataUrl} className="flex-[2] py-3 rounded-xl bg-primary text-on-primary font-label-sm flex items-center justify-center gap-sm shadow-sm disabled:opacity-50">
-                <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>check</span> Konfirmasi
+              <button onClick={confirmVerification} className="flex-[2] py-3 rounded-xl bg-primary text-on-primary font-label-sm flex items-center justify-center gap-sm shadow-sm">
+                <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>check</span> {selfieDataUrl ? 'Konfirmasi' : 'Lewati Verifikasi'}
               </button>
             </div>
           </div>
@@ -816,32 +873,48 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
 
               {/* End Identity Verification */}
               <div className="flex flex-col gap-sm">
-                <p className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Verifikasi Identitas Akhir</p>
-                {!endSelfieDataUrl ? (
-                  <div className="relative w-full aspect-[4/3] bg-black rounded-xl overflow-hidden">
-                    <video ref={endVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-                    <div className="absolute bottom-3 left-0 right-0 flex justify-center">
-                      <button onClick={captureEndPhoto} className="w-16 h-16 bg-white rounded-full border-4 border-error shadow-lg flex items-center justify-center active:scale-90 transition-transform">
-                        <span className="material-symbols-outlined text-error text-[32px]">photo_camera</span>
-                      </button>
-                    </div>
-                    {!endStreamRef.current && (
-                      <button onClick={openEndCamera} className="absolute inset-0 flex flex-col items-center justify-center bg-surface-container gap-sm text-on-surface-variant">
-                        <span className="material-symbols-outlined text-[40px]">photo_camera</span>
-                        <span className="font-label-sm text-label-sm">Tap untuk buka kamera</span>
-                      </button>
-                    )}
-                  </div>
-                ) : (
+                <p className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Verifikasi Identitas Akhir <span className="normal-case text-[10px]">(opsional)</span></p>
+                {/* Hidden file input for gallery */}
+                <input
+                  ref={endFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleEndGalleryUpload}
+                />
+                {endSelfieDataUrl ? (
                   <div className="relative w-full aspect-[4/3] rounded-xl overflow-hidden">
                     <img src={endSelfieDataUrl} alt="Selfie akhir" className="w-full h-full object-cover" />
-                    <button onClick={() => { setEndSelfieDataUrl(null); setEndVerified(false); openEndCamera(); }} className="absolute top-2 right-2 bg-surface/80 backdrop-blur-sm rounded-full p-1.5">
+                    <button onClick={() => { setEndSelfieDataUrl(null); setEndVerified(false); }} className="absolute top-2 right-2 bg-surface/80 backdrop-blur-sm rounded-full p-1.5">
                       <span className="material-symbols-outlined text-error">refresh</span>
                     </button>
                     <div className="absolute bottom-2 left-2 bg-primary/90 text-on-primary px-2 py-1 rounded-full flex items-center gap-1">
                       <span className="material-symbols-outlined text-[14px]">check</span>
                       <span className="font-label-sm text-[10px]">Foto terverifikasi</span>
                     </div>
+                  </div>
+                ) : endCameraActive ? (
+                  <div className="relative w-full aspect-[4/3] bg-black rounded-xl overflow-hidden">
+                    <video ref={endVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                    <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-md">
+                      <button onClick={captureEndPhoto} className="w-16 h-16 bg-white rounded-full border-4 border-error shadow-lg flex items-center justify-center active:scale-90 transition-transform">
+                        <span className="material-symbols-outlined text-error text-[32px]">photo_camera</span>
+                      </button>
+                      <button onClick={stopEndCamera} className="w-10 h-10 bg-surface/80 backdrop-blur rounded-full flex items-center justify-center self-center">
+                        <span className="material-symbols-outlined text-error text-[20px]">close</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-sm">
+                    <button onClick={openEndCamera} className="flex-1 h-24 rounded-xl border-2 border-dashed border-error/40 bg-error-container/10 flex flex-col items-center justify-center text-error hover:bg-error-container/20 transition-colors cursor-pointer gap-1">
+                      <span className="material-symbols-outlined text-[28px]">photo_camera</span>
+                      <span className="font-label-sm text-label-sm">Buka Kamera</span>
+                    </button>
+                    <button onClick={() => endFileInputRef.current?.click()} className="flex-1 h-24 rounded-xl border-2 border-dashed border-error/40 bg-error-container/10 flex flex-col items-center justify-center text-error hover:bg-error-container/20 transition-colors cursor-pointer gap-1">
+                      <span className="material-symbols-outlined text-[28px]">photo_library</span>
+                      <span className="font-label-sm text-label-sm">Pilih dari Galeri</span>
+                    </button>
                   </div>
                 )}
                 {/* GPS info */}
@@ -877,8 +950,8 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
                 Batal
               </button>
               <button
-                onClick={() => { confirmEndVerification(); if (endSelfieDataUrl) handleStopTracking(); }}
-                disabled={!endSelfieDataUrl || !withinEndGeofence || isStopping}
+                onClick={() => { confirmEndVerification(); handleStopTracking(); }}
+                disabled={!withinEndGeofence || isStopping}
                 className="flex-[2] py-3 rounded-xl bg-error text-on-error font-label-sm flex items-center justify-center gap-sm shadow-sm disabled:opacity-50"
               >
                 <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>stop_circle</span>
