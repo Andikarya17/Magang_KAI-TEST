@@ -29,6 +29,9 @@ interface Tracking {
   endLong: number | null;
   durasi: number | null;
   status: string;
+  approvalStatus: 'not_approved' | 'approved';
+  safetyStatus: 'aman' | 'tidak_aman';
+  approvedAt: string | null;
   routePath: string | null;
   laporan: Laporan[];
 }
@@ -103,6 +106,8 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
       }
     };
     fetchDetail();
+    const interval = window.setInterval(fetchDetail, 15000);
+    return () => window.clearInterval(interval);
   }, [params.id]);
 
   // Fetch dynamic emergency categories
@@ -173,6 +178,7 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
 
   const latestTracking = tugas.tracking[0] ?? null;
   const laporanList = latestTracking?.laporan ?? [];
+  const isApproved = latestTracking?.approvalStatus === 'approved';
 
   // Parse routePath from tracking data
   let trackPath: [number, number][] = [];
@@ -220,6 +226,13 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
           <p className="font-label-sm text-label-sm text-on-surface-variant mt-1">
             {new Date(tugas.tanggal).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
+          <div className={`mt-md px-md py-sm rounded-xl border flex items-center gap-sm ${isApproved ? 'bg-primary-container/20 border-primary/30 text-primary' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+            <span className="material-symbols-outlined text-[20px]">{isApproved ? 'verified' : 'pending_actions'}</span>
+            <div className="text-left">
+              <p className="font-label-sm font-bold">{isApproved ? 'Tracking Approved' : 'Menunggu Approval Admin'}</p>
+              <p className="text-[11px]">Status jalur: {latestTracking?.safetyStatus === 'tidak_aman' ? 'Tidak Aman' : 'Aman'}</p>
+            </div>
+          </div>
         </div>
 
         {/* Peta Jalur yang Dilalui */}
@@ -339,11 +352,11 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
         <div className="max-w-xl mx-auto flex flex-col gap-sm">
           <button
             onClick={handleDownloadPdf}
-            disabled={isDownloading}
+            disabled={isDownloading || !isApproved}
             className="w-full bg-surface-container-high text-on-surface border border-outline-variant font-h3 text-h3 py-md rounded-xl shadow-sm active:scale-[0.98] transition-all flex items-center justify-center gap-md disabled:opacity-50"
           >
-            {isDownloading ? 'Mengunduh Laporan...' : 'Download Laporan PDF'}
-            <span className="material-symbols-outlined">{isDownloading ? 'hourglass_empty' : 'picture_as_pdf'}</span>
+            {isDownloading ? 'Mengunduh Laporan...' : isApproved ? 'Download Laporan PDF' : 'PDF Menunggu Approval Admin'}
+            <span className="material-symbols-outlined">{isDownloading ? 'hourglass_empty' : isApproved ? 'picture_as_pdf' : 'lock_clock'}</span>
           </button>
           
           <Link href="/inspeksi" className="w-full bg-primary text-on-primary font-h3 text-h3 py-md rounded-xl shadow-lg active:scale-[0.98] transition-all flex items-center justify-center gap-md">

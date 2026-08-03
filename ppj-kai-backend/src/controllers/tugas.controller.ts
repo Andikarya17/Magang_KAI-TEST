@@ -155,6 +155,16 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
     const latestTracking = tugas.tracking[0] || null;
     const laporanList = latestTracking?.laporan || [];
 
+    // PPJ hanya boleh mengunduh hasil perjalanan setelah admin menyetujuinya.
+    // Admin/KUPT/QC tetap dapat membuka draft laporan untuk kebutuhan review.
+    if (requester.role === 'ppj' && latestTracking?.approvalStatus !== 'approved') {
+      return res.status(403).json({
+        success: false,
+        code: 'REPORT_NOT_APPROVED',
+        message: 'Laporan belum disetujui admin. PDF dapat diunduh setelah approval.',
+      });
+    }
+
     // Parse route path
     let routePath: [number, number][] = [];
     if (latestTracking?.routePath) {
@@ -227,7 +237,9 @@ export const downloadTugasReport = async (req: Request, res: Response) => {
       ['Jalur', `: ${tugas.jalur}`],
       ['Tanggal', `: ${formatDate(tugas.tanggal)}`],
       ['Waktu', `: ${formatTime(latestTracking?.startTime || null)} — ${formatTime(latestTracking?.endTime || null)} (${formatDurasi(latestTracking?.durasi || null)})`],
-      ['Status', `: ${tugas.status.toUpperCase()}`],
+      ['Status Tugas', `: ${tugas.status.toUpperCase()}`],
+      ['Status Tracking', `: ${latestTracking?.approvalStatus === 'approved' ? 'APPROVED' : 'NOT APPROVED'}`],
+      ['Status Keselamatan', `: ${latestTracking?.safetyStatus === 'tidak_aman' ? 'TIDAK AMAN' : 'AMAN'}`],
       ['ID Tugas', `: #PPJ-${String(tugas.id).padStart(6, '0')}`],
     );
     if (routePath.length >= 2) {

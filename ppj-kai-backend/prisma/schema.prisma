@@ -8,28 +8,31 @@ datasource db {
 }
 
 model User {
-  id             Int        @id @default(autoincrement())
-  nipp           String     @unique @db.VarChar(20)
-  nama           String     @db.VarChar(100)
-  password       String     @db.VarChar(255)
-  foto           String?    @db.Text
-  role           String     @default("ppj") @db.VarChar(20) // admin | qc | kupt | guest | ppj
-  jabatan        String?    @db.VarChar(100) // e.g. "Track Inspector"
-  division       String?    @db.VarChar(100) // e.g. "DAOP 1 Jakarta"
-  workArea       String?    @map("work_area") @db.VarChar(100) // e.g. "Sektor 4 (GMR-JAKK)"
-  phone          String?    @db.VarChar(30) // e.g. "+62 812-3456-7890"
-  alertSound     String?    @map("alert_sound") @db.VarChar(20) // siren | beep | chime | off
-  isActive       Boolean    @default(true) @map("is_active")
-  managerId      Int?       @map("manager_id") // ID of the admin who manages this petugas
-  tugasPpj       TugasPpj[]
+  id                 Int           @id @default(autoincrement())
+  nipp               String        @unique @db.VarChar(20)
+  nama               String        @db.VarChar(100)
+  password           String        @db.VarChar(255)
+  foto               String?       @db.Text
+  role               String        @default("ppj") @db.VarChar(20) // admin | qc | kupt | guest | ppj
+  jabatan            String?       @db.VarChar(100) // e.g. "Track Inspector"
+  division           String?       @db.VarChar(100) // e.g. "DAOP 1 Jakarta"
+  workArea           String?       @map("work_area") @db.VarChar(100) // e.g. "Sektor 4 (GMR-JAKK)"
+  phone              String?       @db.VarChar(30) // e.g. "+62 812-3456-7890"
+  alertSound         String?       @map("alert_sound") @db.VarChar(20) // siren | beep | chime | off
+  isActive           Boolean       @default(true) @map("is_active")
+  managerId          Int?          @map("manager_id") // ID of the admin who manages this petugas
+  tugasPpj           TugasPpj[]
   wilayahAssignments UserWilayah[]
-  createdAt      DateTime   @default(now()) @map("created_at")
-  updatedAt      DateTime   @updatedAt @map("updated_at")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
 
   // Self-relation
-  manager        User?      @relation("ManagerPetugas", fields: [managerId], references: [id])
-  petugasManaged User[]     @relation("ManagerPetugas")
-  mapLocations   MapLocation[]
+  manager           User?           @relation("ManagerPetugas", fields: [managerId], references: [id])
+  petugasManaged    User[]          @relation("ManagerPetugas")
+  mapLocations      MapLocation[]
+  trainSchedules    TrainSchedule[] @relation("TrainScheduleCreator")
+  approvedTrackings Tracking[]      @relation("TrackingApprover")
+  warningAlerts     WarningAlert[]
 
   @@map("users")
 }
@@ -73,25 +76,62 @@ model TugasPpj {
 }
 
 model Tracking {
-  id        Int       @id @default(autoincrement())
-  tugasId   Int       @map("tugas_id")
-  startTime DateTime? @map("start_time")
-  endTime   DateTime? @map("end_time")
-  startLat  Float?    @map("start_lat")
-  startLong Float?    @map("start_long")
-  endLat      Float?    @map("end_lat")
-  endLong     Float?    @map("end_long")
-  durasi      Int?      @default(0)
-  status      String    @default("started") @db.VarChar(20)
-  fotoAwal    String?   @map("foto_awal") @db.LongText
-  fotoSelesai String?   @map("foto_selesai") @db.LongText
-  routePath   String?   @map("route_path") @db.LongText  // JSON: [[lat,lng], ...]
-  tugas       TugasPpj  @relation(fields: [tugasId], references: [id])
-  laporan   Laporan[]
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
+  id             Int       @id @default(autoincrement())
+  tugasId        Int       @map("tugas_id")
+  startTime      DateTime? @map("start_time")
+  endTime        DateTime? @map("end_time")
+  startLat       Float?    @map("start_lat")
+  startLong      Float?    @map("start_long")
+  endLat         Float?    @map("end_lat")
+  endLong        Float?    @map("end_long")
+  durasi         Int?      @default(0)
+  status         String    @default("started") @db.VarChar(20)
+  fotoAwal       String?   @map("foto_awal") @db.LongText
+  fotoSelesai    String?   @map("foto_selesai") @db.LongText
+  routePath      String?   @map("route_path") @db.LongText // JSON: [[lat,lng], ...]
+  approvalStatus String    @default("not_approved") @map("approval_status") @db.VarChar(20) // not_approved | approved
+  safetyStatus   String    @default("aman") @map("safety_status") @db.VarChar(20) // aman | tidak_aman
+  approvedAt     DateTime? @map("approved_at")
+  approvedBy     Int?      @map("approved_by")
+  approver       User?     @relation("TrackingApprover", fields: [approvedBy], references: [id], onDelete: SetNull)
+  tugas          TugasPpj  @relation(fields: [tugasId], references: [id])
+  laporan        Laporan[]
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   @@map("tracking")
+}
+
+model TrainSchedule {
+  id            Int      @id @default(autoincrement())
+  trainCode     String   @unique @map("train_code") @db.VarChar(30)
+  trainName     String   @map("train_name") @db.VarChar(100)
+  origin        String   @db.VarChar(150)
+  destination   String   @db.VarChar(150)
+  departureTime String   @map("departure_time") @db.VarChar(5)
+  arrivalTime   String   @map("arrival_time") @db.VarChar(5)
+  isActive      Boolean  @default(true) @map("is_active")
+  createdBy     Int      @map("created_by")
+  creator       User     @relation("TrainScheduleCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([createdBy])
+  @@map("train_schedules")
+}
+
+model WarningAlert {
+  id        Int      @id @default(autoincrement())
+  createdBy Int      @map("created_by")
+  creator   User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  latitude  Float
+  longitude Float
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([expiresAt])
+  @@map("warning_alerts")
 }
 
 model Laporan {
@@ -109,21 +149,21 @@ model Laporan {
 }
 
 model Wilayah {
-  id        Int             @id @default(autoincrement())
-  kode      String          @unique @db.VarChar(20)   // "JR 6.1"
-  nama      String          @db.VarChar(100)           // "Jenar"
-  stations  String          @db.Text                   // JSON array: '["Sta. Jenar"]'
-  users     UserWilayah[]
+  id       Int           @id @default(autoincrement())
+  kode     String        @unique @db.VarChar(20) // "JR 6.1"
+  nama     String        @db.VarChar(100) // "Jenar"
+  stations String        @db.Text // JSON array: '["Sta. Jenar"]'
+  users    UserWilayah[]
 
   @@map("wilayah")
 }
 
 model UserWilayah {
-  id         Int      @id @default(autoincrement())
-  userId     Int      @map("user_id")
-  wilayahId  Int      @map("wilayah_id")
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  wilayah    Wilayah  @relation(fields: [wilayahId], references: [id], onDelete: Cascade)
+  id        Int     @id @default(autoincrement())
+  userId    Int     @map("user_id")
+  wilayahId Int     @map("wilayah_id")
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wilayah   Wilayah @relation(fields: [wilayahId], references: [id], onDelete: Cascade)
 
   @@unique([userId, wilayahId])
   @@map("user_wilayah")

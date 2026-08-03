@@ -8,6 +8,7 @@ import dynamic from 'next/dynamic';
 import axios from 'axios';
 import api from '../../../lib/api';
 import { showToast } from '../../../lib/toast';
+import { playNotification, speakAnnouncement, unlockNotificationAudio } from '../../../lib/audio';
 
 const DynamicMap = dynamic(() => import('../../../components/map/DynamicMap'), { ssr: false });
 
@@ -34,6 +35,9 @@ interface EmergencyCategory {
 interface ApiErrorResponse {
   message?: string;
 }
+
+interface TrainAlert { id: number; trainCode: string; trainName: string; origin: string; destination: string; departureTime: string; arrivalTime: string }
+interface NearbyWarning { id: number; distanceMeters: number; creator: { nama: string; nipp: string } }
 
 // GPS Hook with improved accuracy and reliability
 function useGPS() {
@@ -83,6 +87,14 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   const [trackingId, setTrackingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [trackPath, setTrackPath] = useState<[number, number][]>([]);
+  const [trainAlert, setTrainAlert] = useState<TrainAlert | null>(null);
+  const [nearbyWarning, setNearbyWarning] = useState<NearbyWarning | null>(null);
+  const [sendingWarning, setSendingWarning] = useState(false);
+  const seenTrainAlerts = useRef<Set<number>>(new Set());
+  const seenNearbyWarnings = useRef<Set<number>>(new Set());
+  const gpsPosRef = useRef(gpsPos);
+
+  useEffect(() => { gpsPosRef.current = gpsPos; }, [gpsPos]);
 
   // Timer
   const [elapsed, setElapsed] = useState(0);
@@ -175,6 +187,49 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [status]);
 
+  // Poll jadwal kereta saat tracking aktif. Setiap jadwal dibunyikan satu kali
+  // per sesi halaman agar PPJ tidak menerima alarm berulang tanpa henti.
+  useEffect(() => {
+    if (status !== 'active') return;
+    const checkTrainAlerts = async () => {
+      try {
+        const res = await api.get('/tracking/train-alerts');
+        const alerts: TrainAlert[] = Array.isArray(res.data.data) ? res.data.data : [];
+        const alert = alerts.find(item => !seenTrainAlerts.current.has(item.id));
+        if (!alert) return;
+        seenTrainAlerts.current.add(alert.id);
+        setTrainAlert(alert);
+        playNotification('siren');
+        speakAnnouncement(`Perhatian. Kereta ${alert.trainName}, rute ${alert.origin} menuju ${alert.destination}, sedang dalam jadwal perjalanan.`);
+      } catch { /* polling akan mencoba lagi */ }
+    };
+    void checkTrainAlerts();
+    const interval = window.setInterval(checkTrainAlerts, 30000);
+    return () => window.clearInterval(interval);
+  }, [status]);
+
+  // Poll warning dari PPJ lain berdasarkan posisi GPS terakhir.
+  useEffect(() => {
+    if (status !== 'active') return;
+    const checkNearbyWarnings = async () => {
+      const position = gpsPosRef.current;
+      if (!position) return;
+      try {
+        const res = await api.get('/tracking/warnings/nearby', { params: { lat: position.lat, lng: position.lng } });
+        const warnings: NearbyWarning[] = Array.isArray(res.data.data) ? res.data.data : [];
+        const warning = warnings.find(item => !seenNearbyWarnings.current.has(item.id));
+        if (!warning) return;
+        seenNearbyWarnings.current.add(warning.id);
+        setNearbyWarning(warning);
+        playNotification('beep');
+        speakAnnouncement(`Peringatan dari PPJ ${warning.creator.nama}. Ada kereta yang akan lewat di sekitar Anda.`);
+      } catch { /* polling akan mencoba lagi */ }
+    };
+    void checkNearbyWarnings();
+    const interval = window.setInterval(checkNearbyWarnings, 10000);
+    return () => window.clearInterval(interval);
+  }, [status]);
+
   const fetchTugasDetail = async () => {
     try {
       setLoading(true);
@@ -223,6 +278,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   };
 
   const handleStartTracking = async () => {
+    unlockNotificationAudio();
     if (!testMode && !isVerified) { setVerifyModalOpen(true); return; }
     if (!gpsPos && !(testMode && tugas)) { showToast('Menunggu sinyal GPS...', 'warning'); return; }
 
@@ -311,6 +367,24 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
       console.error('Failed to send laporan', err);
       showToast('Gagal mengirim laporan darurat.', 'error');
     } finally { setIsSubmittingLaporan(false); }
+  };
+
+  const handleSendNearbyWarning = async () => {
+    if (!gpsPos) {
+      showToast('Posisi GPS belum tersedia.', 'warning');
+      return;
+    }
+    try {
+      setSendingWarning(true);
+      const res = await api.post('/tracking/warnings', { lat: gpsPos.lat, lng: gpsPos.lng });
+      playNotification('chime');
+      showToast(res.data.message || 'Warning dikirim ke PPJ sekitar.', 'success');
+    } catch (err: unknown) {
+      const message = axios.isAxiosError<ApiErrorResponse>(err) ? err.response?.data?.message : undefined;
+      showToast(message || 'Gagal mengirim warning.', 'error');
+    } finally {
+      setSendingWarning(false);
+    }
   };
 
   // Emergency camera functions
@@ -548,6 +622,25 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
         <div className="w-10" />
       </header>
 
+      {(trainAlert || nearbyWarning) && (
+        <div className="absolute top-20 left-0 right-0 z-50 px-container-padding pointer-events-auto flex flex-col gap-2 items-center">
+          {trainAlert && (
+            <div className="w-full max-w-xl bg-amber-50 border-2 border-amber-400 rounded-xl shadow-xl p-3 flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full bg-amber-500 text-white flex items-center justify-center shrink-0"><span className="material-symbols-outlined">train</span></div>
+              <div className="flex-1 min-w-0"><p className="font-bold text-amber-900">Kereta Lewat: {trainAlert.trainName}</p><p className="text-xs text-amber-800">{trainAlert.trainCode} · {trainAlert.origin} → {trainAlert.destination} · {trainAlert.departureTime}–{trainAlert.arrivalTime}</p></div>
+              <button onClick={() => setTrainAlert(null)} className="text-amber-700"><span className="material-symbols-outlined">close</span></button>
+            </div>
+          )}
+          {nearbyWarning && (
+            <div className="w-full max-w-xl bg-blue-50 border-2 border-blue-400 rounded-xl shadow-xl p-3 flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0"><span className="material-symbols-outlined">campaign</span></div>
+              <div className="flex-1 min-w-0"><p className="font-bold text-blue-900">Warning dari {nearbyWarning.creator.nama}</p><p className="text-xs text-blue-800">Kereta akan lewat · jarak PPJ sekitar {nearbyWarning.distanceMeters} meter</p></div>
+              <button onClick={() => setNearbyWarning(null)} className="text-blue-700"><span className="material-symbols-outlined">close</span></button>
+            </div>
+          )}
+        </div>
+      )}
+
       <main className="flex-1 w-full relative z-10 pointer-events-none">
         {status === 'pending' ? (
           /* Pre-Start Card — collapsible */
@@ -740,6 +833,14 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
           </div>
         ) : (
           <>
+            {/* Warning PPJ sekitar FAB */}
+            <div className="fixed left-container-padding bottom-[180px] z-40 pointer-events-auto">
+              <button onClick={handleSendNearbyWarning} disabled={sendingWarning || !gpsPos} className="w-16 h-16 bg-blue-600 text-white rounded-full shadow-[0px_8px_24px_rgba(37,99,235,0.35)] flex items-center justify-center hover:scale-105 transition-transform active:scale-95 disabled:opacity-50" title="Peringatkan PPJ dalam radius 1 km">
+                <span className="material-symbols-outlined text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>{sendingWarning ? 'hourglass_empty' : 'campaign'}</span>
+              </button>
+              <p className="mt-1 bg-white/90 rounded-full px-2 py-0.5 text-[9px] font-bold text-blue-700 text-center shadow">WARNING 1 KM</p>
+            </div>
+
             {/* Emergency FAB */}
             <div className="fixed right-container-padding bottom-[180px] z-40 pointer-events-auto">
               <button onClick={() => setIsEmergencyModalOpen(true)} className="w-16 h-16 bg-error text-on-error rounded-full shadow-[0px_8px_24px_rgba(186,26,26,0.3)] flex items-center justify-center hover:scale-105 transition-transform active:scale-95">

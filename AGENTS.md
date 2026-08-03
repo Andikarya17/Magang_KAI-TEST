@@ -127,6 +127,10 @@ tracking (Tracking)
 ├── status: String (20) → "started" | "stopped"
 ├── foto_awal, foto_selesai: Text?
 ├── route_path: Text? (JSON)
+├── approval_status: String → "not_approved" | "approved"
+├── safety_status: String → "aman" | "tidak_aman"
+├── approved_at: DateTime?
+├── approved_by: Int? (FK → users.id)
 └── Relasi: laporan
 
 laporan (Laporan)
@@ -174,6 +178,18 @@ kategori_temuan (KategoriTemuan)
 ├── color: String (default "primary")
 ├── is_active: Boolean (soft delete)
 └── sort_order: Int
+
+train_schedules (TrainSchedule)
+├── train_code, train_name
+├── origin, destination
+├── departure_time, arrival_time (HH:mm, berlaku harian)
+├── is_active
+└── created_by (FK → users.id)
+
+warning_alerts (WarningAlert)
+├── created_by (FK → users.id)
+├── latitude, longitude
+└── expires_at (warning sementara untuk PPJ radius 1 km)
 ```
 
 ---
@@ -192,6 +208,8 @@ kategori_temuan (KategoriTemuan)
 - `GET /api/tugas/summary` → statistik (total, pending, completed)
 - `GET /api/tugas/:id` → detail satu tugas
 - `GET /api/tracking/active/:tugasId` → cek apakah ada tracking aktif (untuk session restore)
+- `GET /api/tracking/train-alerts` → jadwal kereta aktif pada waktu perjalanan saat ini
+- `POST /api/tracking/warnings`, `GET /api/tracking/warnings/nearby` → warning suara antar-PPJ radius 1 km
 - `POST /api/tracking/start/:tugasId` → `{ lat, lng }` → `{ trackingId }`
 - `POST /api/tracking/update/:id` → `{ lat, lng }`
 - `POST /api/tracking/stop/:id` → `{ lat, lng }`
@@ -212,6 +230,8 @@ kategori_temuan (KategoriTemuan)
   - Tingkat kategori `error` berarti Darurat dan boleh memicu sirine; kategori selain `error` berarti Ringan dan tetap tercatat tanpa sirine.
 - `GET /api/admin/kategori-temuan`, `POST`, `PUT`, `DELETE` → CRUD Kategori Temuan
 - `GET /api/admin/live-positions` → posisi PPJ dengan tracking dan tugas yang masih aktif
+- `POST /api/admin/tracking/:id/approve` → approve tracking selesai sekaligus menetapkan status aman/tidak aman
+- `GET`, `POST`, `PATCH`, `DELETE /api/admin/train-schedules` → CRUD jadwal kereta
 - `GET`, `POST`, `DELETE /api/admin/map-locations` → kelola titik lokasi custom admin
   - Titik baru dapat dipilih lewat klik peta, input latitude/longitude manual, atau hasil pencarian; marker draft dapat digeser sebelum disimpan.
   - Menu MAP menampilkan tabel gabungan stasiun dan titik MAP admin di bawah peta, dengan pencarian nama/jenis/alamat/koordinat. Endpoint memastikan tabel `map_locations` tersedia secara idempoten untuk deployment lama yang sebelumnya memakai `prisma db push`.
@@ -221,6 +241,7 @@ kategori_temuan (KategoriTemuan)
 - `GET /api/admin/tugas/template`, `POST /api/admin/tugas/import` → Template dan proses Import Excel
   - Import menerima petugas aktif yang belum masuk kelolaan dan otomatis mengaitkannya ke admin/KUPT setelah baris valid berhasil disimpan.
   - NIPP mengabaikan kapital/spasi; nama stasiun mengabaikan kapital/spasi/tanda baca dan menoleransi typo kecil yang tidak ambigu.
+  - Import ADMIN mencocokkan titik awal/akhir terhadap gabungan stasiun dan titik MAP milik admin; template terbaru menyertakan sheet `Daftar Titik Pengecekan`.
 
 ### Guest / QC / KUPT (requireRole('guest', 'qc', 'kupt'))
 - `GET /api/guest/stats`
@@ -253,56 +274,62 @@ kategori_temuan (KategoriTemuan)
 ### 4. Emergency Loop Sound (Baru)
 - Saat petugas mengirimkan laporan berstatus "emergency" atau "berat" (tergantung *flag* di db), frontend QC/Admin akan memutar suara alarm darurat secara berulang (looping) hingga ada interaksi klik dari user untuk mematikannya.
 
-### 5. Overpass API + Dijkstra (`lib/railway.ts`)
+### 5. Approval, PDF, dan Alert Kereta
+- Tracking selesai berstatus `not_approved` sampai admin pengelola menyetujui hasil dan memilih status `aman`/`tidak_aman`.
+- PPJ hanya dapat mengunduh PDF setelah approval; admin/KUPT/QC tetap dapat membuka draft untuk review.
+- PDF mencantumkan status tracking `APPROVED`/`NOT APPROVED` dan status keselamatan `AMAN`/`TIDAK AMAN`.
+- Saat tracking aktif, PPJ menerima alert suara jadwal kereta dan dapat mengirim warning suara ke PPJ lain dalam radius 1 km.
+
+### 6. Overpass API + Dijkstra (`lib/railway.ts`)
 - Request `way[railway]` dari Overpass API dalam area bounding box.
 - Bangun adjacency graph dari nodes, lalu jalankan shortest-path Dijkstra antara dua titik di atas rel.
 - **Failover otomatis** ke 3 server cermin Overpass (de, kumi, mail.ru).
 
-### 6. Station Dropdown (Admin — Pengganti Map-Click)
+### 7. Station Dropdown (Admin — Pengganti Map-Click)
 - Admin **tidak lagi** klik peta untuk menentukan titik — menggunakan **dropdown stasiun**.
 - Data 15 stasiun hardcoded di konstanta `STATIONS` di `admin/page.tsx`.
 - Auto-fill `jalur`, `startPoint`, dan `endPoint`.
 
-### 7. Geometry Cache (AdminMap)
+### 8. Geometry Cache (AdminMap)
 - Railway geometry di-cache dalam `useRef<Map>` keyed by koordinat start-end agar polling tidak menembak Overpass berkali-kali. Hanya cache hasil non-empty.
 
-### 8. Admin Page — Sidebar
+### 9. Admin Page — Sidebar
 - Halaman admin memiliki menu **Tugas**, **Live**, **Map**, **Akun** (admin), dan **Setting**.
 - **Live** hanya menggambar tugas `in_progress` dan posisi tracking `started`; tugas selesai hilang pada polling berikutnya.
 - **Map** khusus admin untuk mencari tempat, klik peta, menyimpan, dan menghapus titik lokasi custom.
 
-### 9. Task Selection Flow (`/inspeksi`) — Halaman Utama Petugas
+### 10. Task Selection Flow (`/inspeksi`) — Halaman Utama Petugas
 - **Ini adalah satu-satunya halaman petugas** (dashboard, riwayat, profile sudah dihapus).
 - Flow: Login → `/inspeksi` (task selector) → `/inspeksi/:id` (tracking) → `/inspeksi/:id/selesai`.
 - Filter tugas: hanya tampilkan `pending` dan `in_progress`.
 
-### 10. BottomNav Component
+### 11. BottomNav Component
 - Hanya berisi item **Track** → `/inspeksi`. Diatur lewat `BottomNav.tsx`.
 
-### 11. Header Konsisten
+### 12. Header Konsisten
 - Halaman petugas menggunakan header centered text (contoh: "Inspeksi Berlangsung") tanpa tombol/avatar yang tidak perlu.
 
-### 12. Geofencing Tracking
+### 13. Geofencing Tracking
 - Radius: **500 meter** (konstanta `GEOFENCE_RADIUS`). Petugas tidak bisa Start Tracking jika di luar radius.
 
-### 13. Session Persistence
+### 14. Session Persistence
 - Start tracking → simpan ke `localStorage` (`trackPath`, `trackingId`).
 - Update GPS → update local storage.
 - Backend `startTime` adalah sumber kebenaran waktu.
 
-### 14. Warna Per Petugas
+### 15. Warna Per Petugas
 - Hash deterministik dari NIPP → HSL hue. Sama NIPP = sama warna di peta AdminMap.
 
-### 15. Z-Index Strategy (Leaflet vs Modal)
+### 16. Z-Index Strategy (Leaflet vs Modal)
 - Leaflet = z-index 400. Modal overlay = `z-[9999]`. Map container dipisahkan dengan `isolation: isolate`.
 
-### 16. Time-Window Tracking (Baru)
+### 17. Time-Window Tracking (Baru)
 - Tombol "Mulai Tracking" hanya bisa ditekan dalam rentang **1 jam sebelum** sampai **1 jam sesudah** `jam_mulai`.
 - Validasi dilakukan di **frontend** (disable button + pesan) DAN **backend** (`startTracking` return 400 jika di luar window).
 - Jika `jamMulai` null, time-window dilewati (backward compatible).
 - Waktu dihitung dalam WIB (UTC+7). `tanggal` dari Prisma berupa Date (UTC midnight), `jamMulai` dalam format `"HH:MM"` WIB.
 
-### 17. Auto-Missed Scheduler (Baru)
+### 18. Auto-Missed Scheduler (Baru)
 - `src/lib/scheduler.ts` — `setInterval` setiap 5 menit.
 - Cari tugas `pending` hari ini yang `jam_mulai + 1 jam` sudah terlewat → update status ke `missed`.
 - Dijalankan saat server start via `startMissedTaskScheduler()` di `index.ts`.

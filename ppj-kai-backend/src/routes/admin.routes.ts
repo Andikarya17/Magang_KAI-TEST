@@ -9,6 +9,8 @@ import {
   getKategoriTemuan, createKategoriTemuan, updateKategoriTemuan, deleteKategoriTemuan,
   reorderKategoriTemuan,
 } from '../controllers/admin.controller';
+import { approveTracking } from '../controllers/tracking.controller';
+import { createTrainSchedule, deleteTrainSchedule, getTrainSchedules, updateTrainSchedule } from '../controllers/trainSchedule.controller';
 import { createMapLocation, deleteMapLocation, getMapLocations, searchMapLocations } from '../controllers/mapLocation.controller';
 
 // Multer memory storage for Excel file uploads
@@ -29,6 +31,13 @@ router.post('/petugas/add', requireAuth, requireCanWrite, addPetugasToManager);
 router.post('/petugas/remove', requireAuth, requireCanWrite, removePetugasFromManager);
 router.post('/tugas', requireAuth, requireCanWrite, createTugas);
 router.delete('/tugas/:id', requireAuth, requireCanWrite, deleteTugas);
+router.post('/tracking/:id/approve', requireAuth, requireAdmin, approveTracking);
+
+// ── CRUD jadwal kereta — admin only ──
+router.get('/train-schedules', requireAuth, requireAdmin, getTrainSchedules);
+router.post('/train-schedules', requireAuth, requireAdmin, createTrainSchedule);
+router.patch('/train-schedules/:id', requireAuth, requireAdmin, updateTrainSchedule);
+router.delete('/train-schedules/:id', requireAuth, requireAdmin, deleteTrainSchedule);
 
 // ── Excel import/export — admin + kupt only ──
 router.get('/tugas/template', requireAuth, requireCanWrite, downloadTugasTemplate);

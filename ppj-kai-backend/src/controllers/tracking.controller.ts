@@ -158,6 +158,8 @@ export const stopTracking = async (req: Request, res: Response) => {
       routePathStr = typeof routePath === 'string' ? routePath : JSON.stringify(routePath);
     }
 
+    const laporanCount = await prisma.laporan.count({ where: { trackingId: tracking.id } });
+
     await prisma.tracking.update({
       where: { id: tracking.id },
       data: {
@@ -168,6 +170,10 @@ export const stopTracking = async (req: Request, res: Response) => {
         status: 'stopped',
         fotoSelesai: fotoSelesai || null,
         routePath: routePathStr,
+        approvalStatus: 'not_approved',
+        safetyStatus: laporanCount > 0 ? 'tidak_aman' : 'aman',
+        approvedAt: null,
+        approvedBy: null,
       }
     });
 
@@ -181,5 +187,130 @@ export const stopTracking = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Stop tracking error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+export const approveTracking = async (req: Request, res: Response) => {
+  try {
+    const trackingId = Number(req.params.id);
+    const adminId = (req as any).user.id as number;
+    const safetyStatus = String(req.body.safetyStatus || '');
+
+    if (!Number.isInteger(trackingId)) {
+      return res.status(400).json({ success: false, message: 'ID tracking tidak valid' });
+    }
+    if (!['aman', 'tidak_aman'].includes(safetyStatus)) {
+      return res.status(400).json({ success: false, message: 'Status keselamatan harus aman atau tidak_aman' });
+    }
+
+    const tracking = await prisma.tracking.findFirst({
+      where: { id: trackingId, tugas: { user: { managerId: adminId } } },
+    });
+    if (!tracking) {
+      return res.status(404).json({ success: false, message: 'Hasil tracking tidak ditemukan dalam kelolaan Anda' });
+    }
+    if (tracking.status !== 'stopped') {
+      return res.status(400).json({ success: false, message: 'Tracking hanya dapat disetujui setelah inspeksi selesai' });
+    }
+
+    const data = await prisma.tracking.update({
+      where: { id: trackingId },
+      data: {
+        approvalStatus: 'approved',
+        safetyStatus,
+        approvedAt: new Date(),
+        approvedBy: adminId,
+      },
+    });
+    return res.json({ success: true, message: 'Hasil tracking berhasil disetujui', data });
+  } catch (error) {
+    console.error('Approve tracking error:', error);
+    return res.status(500).json({ success: false, message: 'Gagal menyetujui hasil tracking' });
+  }
+};
+
+function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const radius = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const value = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return radius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+}
+
+export const createNearbyWarning = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id as number;
+    const latitude = Number(req.body.lat);
+    const longitude = Number(req.body.lng);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+      return res.status(400).json({ success: false, message: 'Posisi GPS tidak valid' });
+    }
+
+    const activeTracking = await prisma.tracking.findFirst({
+      where: { status: 'started', tugas: { assignedTo: userId } },
+      select: { id: true },
+    });
+    if (!activeTracking) {
+      return res.status(400).json({ success: false, message: 'Warning hanya dapat dikirim saat tracking aktif' });
+    }
+
+    const now = new Date();
+    const recent = await prisma.warningAlert.findFirst({
+      where: { createdBy: userId, createdAt: { gte: new Date(now.getTime() - 30_000) } },
+    });
+    if (recent) {
+      return res.status(429).json({ success: false, message: 'Tunggu 30 detik sebelum mengirim warning lagi' });
+    }
+
+    await prisma.warningAlert.deleteMany({ where: { expiresAt: { lt: now } } });
+    const data = await prisma.warningAlert.create({
+      data: {
+        createdBy: userId,
+        latitude,
+        longitude,
+        expiresAt: new Date(now.getTime() + 2 * 60_000),
+      },
+    });
+    return res.status(201).json({ success: true, message: 'Warning dikirim ke PPJ dalam radius 1 km', data });
+  } catch (error) {
+    console.error('Create nearby warning error:', error);
+    return res.status(500).json({ success: false, message: 'Gagal mengirim warning' });
+  }
+};
+
+export const getNearbyWarnings = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id as number;
+    const latitude = Number(req.query.lat);
+    const longitude = Number(req.query.lng);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+      return res.status(400).json({ success: false, message: 'Posisi GPS wajib dikirim' });
+    }
+
+    const latitudeRange = 1000 / 111_320;
+    const longitudeRange = 1000 / (111_320 * Math.max(0.1, Math.cos(latitude * Math.PI / 180)));
+    const warnings = await prisma.warningAlert.findMany({
+      where: {
+        createdBy: { not: userId },
+        expiresAt: { gte: new Date() },
+        latitude: { gte: latitude - latitudeRange, lte: latitude + latitudeRange },
+        longitude: { gte: longitude - longitudeRange, lte: longitude + longitudeRange },
+      },
+      include: { creator: { select: { nama: true, nipp: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    const data = warnings
+      .map(warning => ({
+        ...warning,
+        distanceMeters: Math.round(haversineMeters(latitude, longitude, warning.latitude, warning.longitude)),
+      }))
+      .filter(warning => warning.distanceMeters <= 1000);
+
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Get nearby warnings error:', error);
+    return res.status(500).json({ success: false, message: 'Gagal mengambil warning sekitar' });
   }
 };

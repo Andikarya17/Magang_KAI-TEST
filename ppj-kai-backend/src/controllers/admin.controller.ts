@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import prisma from '../config/database';
 import * as XLSX from 'xlsx';
-import { findStationMatch, normalizeNipp } from '../utils/importMatching';
+import { findStationMatch, normalizeNipp, normalizeStationName } from '../utils/importMatching';
 import { ensureMapLocationsTable } from '../lib/mapLocationsTable';
 
 // Extend Request type to include user (set by auth middleware)
@@ -737,6 +737,42 @@ const STATIONS = [
   { name: 'Sta. Sragen', lat: -7.429623, lng: 111.016701 },
 ];
 
+type ImportInspectionPoint = {
+  name: string;
+  lat: number;
+  lng: number;
+  type: 'Stasiun' | 'Titik MAP';
+};
+
+async function getImportInspectionPoints(userId: number, role: string): Promise<ImportInspectionPoint[]> {
+  const points: ImportInspectionPoint[] = STATIONS.map(station => ({ ...station, type: 'Stasiun' }));
+  if (role !== 'admin') return points;
+
+  await ensureMapLocationsTable();
+  const customLocations = await prisma.mapLocation.findMany({
+    where: { createdBy: userId },
+    select: { name: true, latitude: true, longitude: true },
+    orderBy: { name: 'asc' },
+  });
+
+  // Nama yang sama dengan stasiun/titik sebelumnya tidak ditambahkan ulang agar
+  // pencocokan exact tidak menjadi ambigu. Stasiun bawaan mendapat prioritas.
+  const knownNames = new Set(points.map(point => normalizeStationName(point.name)));
+  for (const location of customLocations) {
+    const normalizedName = normalizeStationName(location.name);
+    if (!normalizedName || knownNames.has(normalizedName)) continue;
+    knownNames.add(normalizedName);
+    points.push({
+      name: location.name,
+      lat: location.latitude,
+      lng: location.longitude,
+      type: 'Titik MAP',
+    });
+  }
+
+  return points;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /admin/tugas/template — Download Excel template for bulk task import
 // ─────────────────────────────────────────────────────────────────────────────
@@ -744,6 +780,7 @@ const STATIONS = [
 export const downloadTugasTemplate = async (req: AuthRequest, res: Response) => {
   try {
     const managerId = req.user!.id;
+    const role = req.user!.role;
 
     // Template juga menampilkan petugas yang belum dikelola agar dapat langsung
     // dipakai untuk import; petugas tersebut otomatis dikaitkan saat import sukses.
@@ -758,10 +795,11 @@ export const downloadTugasTemplate = async (req: AuthRequest, res: Response) => 
     });
 
     const wb = XLSX.utils.book_new();
+    const inspectionPoints = await getImportInspectionPoints(managerId, role);
 
     // Sheet 1: Template with headers + example row
     const templateData = [
-      ['NIPP Petugas', 'Nama Petugas', 'Stasiun Awal', 'Stasiun Akhir', 'Tanggal (YYYY-MM-DD)', 'Jam Mulai (HH:mm)', 'Jam Selesai (HH:mm)'],
+      ['NIPP Petugas', 'Nama Petugas', 'Titik Awal', 'Titik Akhir', 'Tanggal (YYYY-MM-DD)', 'Jam Mulai (HH:mm)', 'Jam Selesai (HH:mm)'],
       [petugasList[0]?.nipp || 'KAI-1234', petugasList[0]?.nama || 'Nama Petugas', 'Sta. Yogyakarta', 'Sta. Solo Balapan', '2026-07-10', '08:00', '16:00'],
     ];
     const wsTemplate = XLSX.utils.aoa_to_sheet(templateData);
@@ -771,14 +809,14 @@ export const downloadTugasTemplate = async (req: AuthRequest, res: Response) => 
     ];
     XLSX.utils.book_append_sheet(wb, wsTemplate, 'Template Penugasan');
 
-    // Sheet 2: Daftar Stasiun
+    // Sheet 2: all inspection points available to this importer
     const stationData = [
-      ['Nama Stasiun', 'Latitude', 'Longitude'],
-      ...STATIONS.map(s => [s.name, s.lat, s.lng]),
+      ['Jenis', 'Nama Titik', 'Latitude', 'Longitude'],
+      ...inspectionPoints.map(point => [point.type, point.name, point.lat, point.lng]),
     ];
     const wsStations = XLSX.utils.aoa_to_sheet(stationData);
-    wsStations['!cols'] = [{ wch: 22 }, { wch: 14 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(wb, wsStations, 'Daftar Stasiun');
+    wsStations['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 14 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, wsStations, 'Daftar Titik Pengecekan');
 
     // Sheet 3: Daftar Petugas Kelolaan
     const petugasData = [
@@ -837,6 +875,7 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       select: { id: true, nipp: true, nama: true, managerId: true },
     });
     const nippMap = new Map(activePetugas.map(p => [normalizeNipp(p.nipp), p]));
+    const inspectionPoints = await getImportInspectionPoints(managerId, role);
 
     // KUPT station validation
     let allowedStations: string[] | null = null;
@@ -871,11 +910,11 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
         continue;
       }
       if (!rawStart) {
-        results.push({ row: rowNum, status: 'error', message: 'Stasiun Awal kosong' });
+        results.push({ row: rowNum, status: 'error', message: 'Titik Awal kosong' });
         continue;
       }
       if (!rawEnd) {
-        results.push({ row: rowNum, status: 'error', message: 'Stasiun Akhir kosong' });
+        results.push({ row: rowNum, status: 'error', message: 'Titik Akhir kosong' });
         continue;
       }
       if (!rawTanggal) {
@@ -894,21 +933,21 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
         continue;
       }
 
-      // Validate stations
-      const startMatch = findStationMatch(rawStart, STATIONS);
-      const endMatch = findStationMatch(rawEnd, STATIONS);
+      // Match built-in stations and the importing admin's registered MAP points.
+      const startMatch = findStationMatch(rawStart, inspectionPoints);
+      const endMatch = findStationMatch(rawEnd, inspectionPoints);
       if (!startMatch) {
-        results.push({ row: rowNum, status: 'error', message: `Stasiun Awal "${rawStart}" tidak ditemukan` });
+        results.push({ row: rowNum, status: 'error', message: `Titik Awal "${rawStart}" tidak ditemukan` });
         continue;
       }
       if (!endMatch) {
-        results.push({ row: rowNum, status: 'error', message: `Stasiun Akhir "${rawEnd}" tidak ditemukan` });
+        results.push({ row: rowNum, status: 'error', message: `Titik Akhir "${rawEnd}" tidak ditemukan` });
         continue;
       }
       const startStation = startMatch.station;
       const endStation = endMatch.station;
       if (startStation.name === endStation.name) {
-        results.push({ row: rowNum, status: 'error', message: 'Stasiun Awal dan Akhir tidak boleh sama' });
+        results.push({ row: rowNum, status: 'error', message: 'Titik Awal dan Akhir tidak boleh sama' });
         continue;
       }
 

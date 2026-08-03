@@ -13,11 +13,16 @@ interface Laporan {
 }
 
 interface Tracking {
+  id: number;
+  status: string;
   startTime: string | null;
   endTime: string | null;
   durasi: number | null;
   fotoAwal?: string | null;
   fotoSelesai?: string | null;
+  approvalStatus: 'not_approved' | 'approved';
+  safetyStatus: 'aman' | 'tidak_aman';
+  approvedAt?: string | null;
   laporan: Laporan[];
 }
 
@@ -41,7 +46,10 @@ interface Props {
   jenisLabel: Record<string, string>;
   jenisColor: Record<string, string>;
   isDownloading: boolean;
+  isAdmin: boolean;
+  isApproving: boolean;
   onDownloadPdf: () => void;
+  onApprove: (safetyStatus: 'aman' | 'tidak_aman') => void;
   onClose: () => void;
 }
 
@@ -76,7 +84,7 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
   return (radius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value))).toFixed(1);
 }
 
-export default function TaskDetailModal({ tugas, jenisLabel, jenisColor, isDownloading, onDownloadPdf, onClose }: Props) {
+export default function TaskDetailModal({ tugas, jenisLabel, jenisColor, isDownloading, isAdmin, isApproving, onDownloadPdf, onApprove, onClose }: Props) {
   const latestTracking = tugas.tracking?.[0] ?? null;
   const laporan = latestTracking?.laporan ?? [];
   const completed = tugas.status === 'completed';
@@ -146,6 +154,16 @@ export default function TaskDetailModal({ tugas, jenisLabel, jenisColor, isDownl
                 <div><p className="text-xs text-slate-500">Mulai</p><p className="font-bold text-slate-800 mt-0.5">{formatTime(latestTracking.startTime)}</p></div>
                 <div><p className="text-xs text-slate-500">Selesai</p><p className="font-bold text-slate-800 mt-0.5">{formatTime(latestTracking.endTime)}</p></div>
               </div>
+              <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-slate-100">
+                <div>
+                  <p className="text-xs text-slate-500">Status Tracking</p>
+                  <p className={`font-bold mt-0.5 ${latestTracking.approvalStatus === 'approved' ? 'text-emerald-700' : 'text-amber-700'}`}>{latestTracking.approvalStatus === 'approved' ? 'Approved' : 'Not Approved'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">Status Keselamatan</p>
+                  <p className={`font-bold mt-0.5 ${latestTracking.safetyStatus === 'tidak_aman' ? 'text-rose-700' : 'text-emerald-700'}`}>{latestTracking.safetyStatus === 'tidak_aman' ? 'Tidak Aman' : 'Aman'}</p>
+                </div>
+              </div>
             </section>
           ) : (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-3 text-amber-800">
@@ -201,6 +219,16 @@ export default function TaskDetailModal({ tugas, jenisLabel, jenisColor, isDownl
 
         <div className="p-4 border-t border-slate-200 bg-white shrink-0 flex flex-col-reverse sm:flex-row gap-2">
           <button onClick={onClose} className="sm:w-1/3 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50">Tutup</button>
+          {isAdmin && latestTracking?.status === 'stopped' && latestTracking.approvalStatus !== 'approved' && (
+            <div className="flex-1 grid grid-cols-2 gap-2">
+              <button onClick={() => onApprove('aman')} disabled={isApproving} className="py-3 rounded-xl bg-emerald-600 text-white font-bold text-xs flex items-center justify-center gap-1 hover:bg-emerald-700 disabled:opacity-50">
+                <span className="material-symbols-outlined text-[18px]">verified</span> Approve Aman
+              </button>
+              <button onClick={() => onApprove('tidak_aman')} disabled={isApproving} className="py-3 rounded-xl bg-rose-600 text-white font-bold text-xs flex items-center justify-center gap-1 hover:bg-rose-700 disabled:opacity-50">
+                <span className="material-symbols-outlined text-[18px]">gpp_bad</span> Approve Tidak Aman
+              </button>
+            </div>
+          )}
           <button onClick={onDownloadPdf} disabled={isDownloading} className="flex-1 py-3 rounded-xl bg-primary text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-primary/20 hover:bg-primary/90 disabled:opacity-50">
             <span className="material-symbols-outlined text-[19px]">{isDownloading ? 'hourglass_empty' : 'picture_as_pdf'}</span>
             {isDownloading ? 'Mengunduh PDF...' : 'Download Laporan PDF'}

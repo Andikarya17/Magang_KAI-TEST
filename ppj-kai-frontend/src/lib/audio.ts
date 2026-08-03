@@ -12,6 +12,12 @@ function getAudioContext() {
   return audioCtx;
 }
 
+/** Aktifkan AudioContext dari interaksi pengguna agar alarm polling boleh berbunyi. */
+export function unlockNotificationAudio() {
+  const ctx = getAudioContext();
+  if (ctx?.state === 'suspended') void ctx.resume();
+}
+
 // Duration of each sound type in ms (used for loop interval)
 const SOUND_DURATION: Record<string, number> = {
   siren: 2200,
@@ -229,5 +235,18 @@ export function speakEmergencyAnnouncement(jenisTemuan: string, deskripsi: strin
     utterance.voice = idVoice;
   }
 
+  window.speechSynthesis.speak(utterance);
+}
+
+/** Membacakan pesan operasional singkat (alert kereta/warning PPJ). */
+export function speakAnnouncement(text: string) {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'id-ID';
+  utterance.rate = 0.95;
+  utterance.volume = 1;
+  const idVoice = window.speechSynthesis.getVoices().find(voice => voice.lang.startsWith('id'));
+  if (idVoice) utterance.voice = idVoice;
   window.speechSynthesis.speak(utterance);
 }

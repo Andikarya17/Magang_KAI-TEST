@@ -26,6 +26,16 @@ test('typo kecil tetap dipetakan ke stasiun kanonis', () => {
   }
 });
 
+test('titik MAP custom menggunakan pencocokan toleran yang sama', () => {
+  const inspectionPoints = [
+    ...stations,
+    { name: 'Pos Jaga KM 123', lat: -7.7, lng: 110.4, type: 'Titik MAP' },
+  ];
+  const match = findStationMatch(' pos  jaga km-124 ', inspectionPoints);
+  assert.equal(match?.station.name, 'Pos Jaga KM 123');
+  assert.equal(match?.distance, 1);
+});
+
 test('teks yang terlalu berbeda tidak dipaksakan ke suatu stasiun', () => {
   assert.equal(findStationMatch('stasiun tidak dikenal', stations), null);
 });
