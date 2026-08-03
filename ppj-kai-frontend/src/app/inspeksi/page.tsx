@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import api from '../../lib/api';
+import { showToast } from '../../lib/toast';
+import { getApiErrorMessage } from '../../lib/utils';
 
 const DynamicMap = dynamic(() => import('../../components/map/DynamicMap'), { ssr: false });
 
@@ -28,6 +30,8 @@ interface Tugas {
     durasi: number | null;
     status: string;
     routePath: string | null;
+    approvalStatus: 'not_approved' | 'approved';
+    safetyStatus: 'aman' | 'tidak_aman';
   }[];
 }
 
@@ -49,6 +53,9 @@ interface TugasDetail {
     durasi: number | null;
     status: string;
     routePath: string | null;
+    approvalStatus: 'not_approved' | 'approved';
+    safetyStatus: 'aman' | 'tidak_aman';
+    approvedAt: string | null;
     laporan: { id: number }[];
   }[];
 }
@@ -107,6 +114,7 @@ export default function InspeksiIndexPage() {
   const [activeTab, setActiveTab] = useState<'tugas' | 'riwayat'>('tugas');
   const [selectedDetail, setSelectedDetail] = useState<TugasDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [downloadingTugasId, setDownloadingTugasId] = useState<number | null>(null);
 
   const handleLogout = () => { localStorage.clear(); router.push('/login'); };
 
@@ -119,6 +127,25 @@ export default function InspeksiIndexPage() {
       console.error('Error fetching detail:', err);
     } finally {
       setLoadingDetail(false);
+    }
+  };
+
+  const handleDownloadPdf = async (tugasId: number) => {
+    try {
+      setDownloadingTugasId(tugasId);
+      const res = await api.get(`/tugas/${tugasId}/report`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `Laporan_Inspeksi_PPJ_${tugasId}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error: unknown) {
+      showToast(getApiErrorMessage(error, 'Gagal mengunduh laporan PDF.'), 'error');
+    } finally {
+      setDownloadingTugasId(null);
     }
   };
 
@@ -478,7 +505,7 @@ export default function InspeksiIndexPage() {
                           onClick={() => handleOpenDetail(tugas.id)}
                           className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-all duration-300 bg-slate-900 text-white hover:bg-primary shadow-slate-900/10 hover:shadow-primary/25"
                         >
-                          Selengkapnya
+                          Lihat Laporan
                           <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
                         </button>
                       </div>
@@ -593,6 +620,15 @@ export default function InspeksiIndexPage() {
                   </div>
                 </div>
 
+                {/* Approval & safety status */}
+                <div className={`rounded-2xl p-4 border flex items-center gap-3 ${trk?.approvalStatus === 'approved' ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                  <span className={`material-symbols-outlined text-[26px] ${trk?.approvalStatus === 'approved' ? 'text-emerald-600' : 'text-amber-600'}`}>{trk?.approvalStatus === 'approved' ? 'verified' : 'pending_actions'}</span>
+                  <div>
+                    <p className={`text-sm font-extrabold ${trk?.approvalStatus === 'approved' ? 'text-emerald-800' : 'text-amber-800'}`}>{trk?.approvalStatus === 'approved' ? 'Tracking Approved' : 'Menunggu Approval Admin'}</p>
+                    <p className="text-xs text-slate-600 mt-0.5">Status jalur: {trk?.safetyStatus === 'tidak_aman' ? 'Tidak Aman' : 'Aman'}</p>
+                  </div>
+                </div>
+
                 {/* Date & ID */}
                 <div className="flex items-center justify-between px-1">
                   <p className="font-label-sm text-slate-400">
@@ -602,6 +638,18 @@ export default function InspeksiIndexPage() {
                     #PPJ-{String(selectedDetail.id).padStart(6, '0')}
                   </p>
                 </div>
+              </div>
+
+              <div className="p-5 border-t border-slate-100 bg-white shrink-0 flex gap-3">
+                <button onClick={() => setSelectedDetail(null)} className="w-1/3 py-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50">Tutup</button>
+                <button
+                  onClick={() => handleDownloadPdf(selectedDetail.id)}
+                  disabled={trk?.approvalStatus !== 'approved' || downloadingTugasId === selectedDetail.id}
+                  className="flex-1 py-3 rounded-xl bg-primary text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-primary/20 disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none disabled:cursor-not-allowed"
+                >
+                  <span className="material-symbols-outlined text-[19px]">{downloadingTugasId === selectedDetail.id ? 'hourglass_empty' : trk?.approvalStatus === 'approved' ? 'picture_as_pdf' : 'lock_clock'}</span>
+                  {downloadingTugasId === selectedDetail.id ? 'Mengunduh...' : trk?.approvalStatus === 'approved' ? 'Download PDF' : 'PDF Belum Disetujui'}
+                </button>
               </div>
             </div>
           </div>
