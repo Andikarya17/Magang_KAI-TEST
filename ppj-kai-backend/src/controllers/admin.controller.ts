@@ -4,6 +4,7 @@ import prisma from '../config/database';
 import * as XLSX from 'xlsx';
 import { findStationMatch, normalizeNipp, normalizeStationName } from '../utils/importMatching';
 import { ensureMapLocationsTable } from '../lib/mapLocationsTable';
+import { resolveTugasStatus } from '../utils/tugasStatus';
 
 // Extend Request type to include user (set by auth middleware)
 interface AuthRequest extends Request {
@@ -88,9 +89,18 @@ export const getStats = async (req: AuthRequest, res: Response) => {
       ? buildStationFilter(stations)
       : { user: managedFilter };
 
-    const [tugasAktif, tugasSelesai, laporanDarurat] = await Promise.all([
-      prisma.tugasPpj.count({ where: { status: { in: ['pending', 'in_progress', 'need_approval'] }, ...tugasWhere } }),
-      prisma.tugasPpj.count({ where: { status: 'completed', ...tugasWhere } }),
+    const [tugasRows, laporanDarurat] = await Promise.all([
+      prisma.tugasPpj.findMany({
+        where: tugasWhere,
+        select: {
+          status: true,
+          tracking: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { status: true, approvalStatus: true },
+          },
+        },
+      }),
       prisma.laporan.count({
         where: {
           jenisTemuan: { in: ['emergency', 'berat'] },
@@ -98,6 +108,9 @@ export const getStats = async (req: AuthRequest, res: Response) => {
         },
       }),
     ]);
+    const effectiveStatuses = tugasRows.map(item => resolveTugasStatus(item.status, item.tracking));
+    const tugasAktif = effectiveStatuses.filter(status => ['pending', 'in_progress', 'need_approval'].includes(status)).length;
+    const tugasSelesai = effectiveStatuses.filter(status => status === 'completed').length;
 
     return res.json({ success: true, data: { totalPetugas, tugasAktif, tugasSelesai, laporanDarurat } });
   } catch (error) {
@@ -262,7 +275,11 @@ export const getAllTugas = async (req: AuthRequest, res: Response) => {
       },
       orderBy: { createdAt: 'desc' },
     });
-    return res.json({ success: true, data: tugas });
+    const data = tugas.map(item => ({
+      ...item,
+      status: resolveTugasStatus(item.status, item.tracking),
+    }));
+    return res.json({ success: true, data });
   } catch (error) {
     console.error('Get all tugas error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });

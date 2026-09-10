@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../config/database';
 import { renderStaticMap } from '../lib/staticMap';
+import { resolveTugasStatus } from '../utils/tugasStatus';
 
 export const getTugasPetugas = async (req: Request, res: Response) => {
   try {
@@ -17,7 +18,11 @@ export const getTugasPetugas = async (req: Request, res: Response) => {
       },
     });
 
-    return res.json({ success: true, data: tugas });
+    const data = tugas.map(item => ({
+      ...item,
+      status: resolveTugasStatus(item.status, item.tracking),
+    }));
+    return res.json({ success: true, data });
   } catch (error) {
     console.error('Get Tugas error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
@@ -47,7 +52,10 @@ export const getTugasById = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Tugas not found' });
     }
 
-    return res.json({ success: true, data: tugas });
+    return res.json({
+      success: true,
+      data: { ...tugas, status: resolveTugasStatus(tugas.status, tugas.tracking) },
+    });
   } catch (error) {
     console.error('Get Tugas by ID error:', error);
     return res.status(500).json({ success: false, message: 'Internal server error' });
@@ -65,8 +73,14 @@ export const getTugasSummary = async (req: Request, res: Response) => {
       },
       select: {
         status: true,
-      }
+        tracking: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { status: true, approvalStatus: true },
+        },
+      },
     });
+    const effectiveStatuses = tugas.map(item => resolveTugasStatus(item.status, item.tracking));
 
     // Mocking emergency reports count for the prototype
     const emergencyReports = await prisma.laporan.count({
@@ -82,9 +96,10 @@ export const getTugasSummary = async (req: Request, res: Response) => {
 
     const summary = {
       totalTasks: tugas.length,
-      completed: tugas.filter(t => t.status === 'completed').length,
-      inProgress: tugas.filter(t => t.status === 'in_progress').length,
-      pending: tugas.filter(t => t.status === 'pending').length,
+      completed: effectiveStatuses.filter(status => status === 'completed').length,
+      needApproval: effectiveStatuses.filter(status => status === 'need_approval').length,
+      inProgress: effectiveStatuses.filter(status => status === 'in_progress').length,
+      pending: effectiveStatuses.filter(status => status === 'pending').length,
       emergencyReports: emergencyReports || 0
     };
 
