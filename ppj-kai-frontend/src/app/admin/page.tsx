@@ -11,6 +11,7 @@ import { showConfirm } from '../../lib/confirm';
 import { getApiErrorMessage } from '../../lib/utils';
 import { STATIONS } from '../../lib/stations';
 import TaskDetailModal from '../../components/admin/TaskDetailModal';
+import { resolveTugasStatus } from '../../lib/tugasStatus';
 
 // Same deterministic color as AdminMap — NIPP → unique HSL color
 function petugasColor(nipp: string): string {
@@ -296,9 +297,12 @@ export default function AdminPage() {
       const [statsRes, petugasRes, tugasRes, emRes, liveRes] = await Promise.all([
         api.get('/admin/stats'), api.get('/admin/petugas'), api.get('/admin/tugas'), api.get('/admin/emergency'), api.get('/admin/live-positions'),
       ]);
-      setStats(statsRes.data.data);
+      const normalizedTugas: Tugas[] = (Array.isArray(tugasRes.data.data) ? tugasRes.data.data : []).map(resolveTugasStatus);
+      const tugasSelesai = normalizedTugas.filter(item => item.status === 'completed').length;
+      const tugasAktif = normalizedTugas.filter(item => ['pending', 'in_progress', 'need_approval'].includes(item.status)).length;
+      setStats({ ...statsRes.data.data, tugasAktif, tugasSelesai });
       setPetugas(petugasRes.data.data);
-      setTugas(tugasRes.data.data);
+      setTugas(normalizedTugas);
       setEmergencies(emRes.data.data);
       setLivePositions(liveRes.data.data);
     } catch (e) { console.error(e); }

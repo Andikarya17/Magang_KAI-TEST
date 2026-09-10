@@ -7,6 +7,7 @@ import dynamic from 'next/dynamic';
 import api from '../../lib/api';
 import { showToast } from '../../lib/toast';
 import { getApiErrorMessage } from '../../lib/utils';
+import { resolveTugasStatus } from '../../lib/tugasStatus';
 
 const DynamicMap = dynamic(() => import('../../components/map/DynamicMap'), { ssr: false });
 
@@ -156,7 +157,7 @@ export default function InspeksiIndexPage() {
     const fetchTasks = async () => {
       try {
         const res = await api.get('/tugas');
-        const allTasks: Tugas[] = res.data.data || [];
+        const allTasks: Tugas[] = (Array.isArray(res.data.data) ? res.data.data : []).map(resolveTugasStatus);
         // Filter: tugas aktif dan tugas selesai (riwayat)
         const activeTasks = allTasks.filter(t => t.status === 'pending' || t.status === 'in_progress' || t.status === 'need_approval' || t.status === 'missed');
         const completed = allTasks.filter(t => t.status === 'completed');
