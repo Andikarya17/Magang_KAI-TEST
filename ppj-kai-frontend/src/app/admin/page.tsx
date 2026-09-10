@@ -46,6 +46,21 @@ const ROLE_LABEL: Record<string, string> = { admin: 'Admin', qc: 'QC', kupt: 'KU
 
 const STATUS_COLOR: Record<string, string> = { pending: 'bg-surface-container text-on-surface-variant border-outline-variant', in_progress: 'bg-primary-container/20 text-primary border-primary/30', need_approval: 'bg-amber-100 text-amber-800 border-amber-300', completed: 'bg-primary-fixed text-on-primary-fixed-variant border-transparent' };
 const STATUS_LABEL: Record<string, string> = { pending: 'Pending', in_progress: 'Berlangsung', need_approval: 'Butuh Approval', completed: 'Selesai' };
+type TugasStatusFilter = 'all' | 'pending' | 'in_progress' | 'need_approval' | 'completed';
+const TUGAS_STATUS_FILTERS: readonly { value: TugasStatusFilter; label: string; icon: string }[] = [
+  { value: 'all', label: 'Semua', icon: 'view_list' },
+  { value: 'pending', label: 'Pending', icon: 'schedule' },
+  { value: 'in_progress', label: 'Berlangsung', icon: 'directions_walk' },
+  { value: 'need_approval', label: 'Butuh Approval', icon: 'approval' },
+  { value: 'completed', label: 'Selesai', icon: 'check_circle' },
+];
+const STATUS_FILTER_ACTIVE: Record<TugasStatusFilter, string> = {
+  all: 'bg-slate-800 text-white border-slate-800 shadow-sm',
+  pending: 'bg-slate-600 text-white border-slate-600 shadow-sm',
+  in_progress: 'bg-primary text-white border-primary shadow-sm',
+  need_approval: 'bg-amber-400 text-amber-950 border-amber-400 shadow-sm',
+  completed: 'bg-emerald-600 text-white border-emerald-600 shadow-sm',
+};
 
 const ALERT_SOUND_STORAGE_KEY = 'admin_alert_sound';
 const ALERT_SOUND_OPTIONS: NotificationSound[] = ['off', 'siren', 'beep', 'chime'];
@@ -99,7 +114,7 @@ export default function AdminPage() {
 
   // Task list filter state
   const [tugasSearchQuery, setTugasSearchQuery] = useState('');
-  const [tugasStatusFilter, setTugasStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'need_approval' | 'completed'>('all');
+  const [tugasStatusFilter, setTugasStatusFilter] = useState<TugasStatusFilter>('all');
   const [tugasDateFrom, setTugasDateFrom] = useState('');
   const [tugasDateTo, setTugasDateTo] = useState('');
   const [selectedTugasDetail, setSelectedTugasDetail] = useState<Tugas | null>(null);
@@ -164,11 +179,10 @@ export default function AdminPage() {
     return map;
   }, [kategoriList]);
 
-  // Filtered task list (search by jalur/nama/nipp + status + inclusive date range)
-  const filteredTugas = React.useMemo(() => {
+  // Search and date filters are applied before status counts so each tab remains informative.
+  const tugasInSearchAndDate = React.useMemo(() => {
     const q = tugasSearchQuery.trim().toLowerCase();
     return tugas.filter(t => {
-      if (tugasStatusFilter !== 'all' && t.status !== tugasStatusFilter) return false;
       const taskDate = t.tanggal.slice(0, 10);
       if (tugasDateFrom && taskDate < tugasDateFrom) return false;
       if (tugasDateTo && taskDate > tugasDateTo) return false;
@@ -179,7 +193,20 @@ export default function AdminPage() {
         (t.user?.nipp?.toLowerCase().includes(q) ?? false)
       );
     });
-  }, [tugas, tugasSearchQuery, tugasStatusFilter, tugasDateFrom, tugasDateTo]);
+  }, [tugas, tugasSearchQuery, tugasDateFrom, tugasDateTo]);
+
+  const tugasStatusCounts = React.useMemo<Record<TugasStatusFilter, number>>(() => ({
+    all: tugasInSearchAndDate.length,
+    pending: tugasInSearchAndDate.filter(t => t.status === 'pending').length,
+    in_progress: tugasInSearchAndDate.filter(t => t.status === 'in_progress').length,
+    need_approval: tugasInSearchAndDate.filter(t => t.status === 'need_approval').length,
+    completed: tugasInSearchAndDate.filter(t => t.status === 'completed').length,
+  }), [tugasInSearchAndDate]);
+
+  const filteredTugas = React.useMemo(() => tugasStatusFilter === 'all'
+    ? tugasInSearchAndDate
+    : tugasInSearchAndDate.filter(t => t.status === tugasStatusFilter),
+  [tugasInSearchAndDate, tugasStatusFilter]);
 
   // Load alert sound preference
   useEffect(() => {
@@ -1051,7 +1078,7 @@ export default function AdminPage() {
                 {/* Filter bar */}
                 {tugas.length > 0 && (
                   <div className="space-y-3 mb-6">
-                    <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="flex flex-col gap-3">
                       <div className="relative flex-1">
                         <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
                         <input
@@ -1070,24 +1097,25 @@ export default function AdminPage() {
                           </button>
                         )}
                       </div>
-                      <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1 shrink-0 overflow-x-auto">
-                        {([
-                          ['all', 'Semua'],
-                          ['pending', 'Pending'],
-                          ['in_progress', 'Berlangsung'],
-                          ['need_approval', 'Butuh Approval'],
-                          ['completed', 'Selesai'],
-                        ] as const).map(([value, label]) => (
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 bg-slate-100 rounded-xl p-1.5" role="group" aria-label="Filter status penugasan">
+                        {TUGAS_STATUS_FILTERS.map(({ value, label, icon }) => (
                           <button
                             key={value}
                             onClick={() => setTugasStatusFilter(value)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+                            aria-pressed={tugasStatusFilter === value}
+                            className={`min-w-0 px-2.5 py-2 rounded-lg border text-[11px] font-bold transition-all ${
                               tugasStatusFilter === value
-                                ? 'bg-white text-primary shadow-sm'
-                                : 'text-slate-500 hover:text-slate-700'
+                                ? STATUS_FILTER_ACTIVE[value]
+                                : 'bg-transparent text-slate-600 border-transparent hover:bg-white hover:border-slate-200'
                             }`}
                           >
-                            {label}
+                            <span className="flex items-center justify-center gap-1.5">
+                              <span className="material-symbols-outlined text-[15px] shrink-0">{icon}</span>
+                              <span className="truncate">{label}</span>
+                              <span className={`min-w-5 h-5 px-1 rounded-full inline-flex items-center justify-center text-[10px] tabular-nums ${
+                                tugasStatusFilter === value ? 'bg-white/25' : 'bg-white text-slate-500'
+                              }`}>{tugasStatusCounts[value]}</span>
+                            </span>
                           </button>
                         ))}
                       </div>
