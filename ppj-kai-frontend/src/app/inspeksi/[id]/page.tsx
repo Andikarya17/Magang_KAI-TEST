@@ -37,11 +37,11 @@ interface ApiErrorResponse {
 }
 
 interface TrainAlert { id: number; trainCode: string; trainName: string; origin: string; destination: string; departureTime: string; arrivalTime: string }
-interface NearbyWarning { id: number; distanceMeters: number; creator: { nama: string; nipp: string } }
+interface NearbyWarning { startPointName: string; endPointName: string; id: number; distanceMeters: number; creator: { nama: string; nipp: string } }
 
 // GPS Hook with improved accuracy and reliability
 function useGPS() {
-  const [position, setPosition] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
+  const [position, setPosition] = useState<{ lat: number; lng: number; accuracy: number; timestamp: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const watchRef = useRef<number | null>(null);
 
@@ -52,7 +52,7 @@ function useGPS() {
     watchRef.current = navigator.geolocation.watchPosition(
       (pos) => {
         setError(null);
-        setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy });
+        setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, timestamp: pos.timestamp });
       },
       (err) => {
         // If high accuracy fails, try with lower accuracy as fallback
@@ -61,7 +61,7 @@ function useGPS() {
           watchRef.current = navigator.geolocation.watchPosition(
             (pos) => {
               setError(null);
-              setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy });
+              setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, timestamp: pos.timestamp });
             },
             (err2) => setError(err2.message),
             { enableHighAccuracy: false, timeout: 30000, maximumAge: 10000 }
@@ -179,6 +179,19 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
     }
   }, [gpsPos, status]);
 
+  // Kirim hanya hasil GPS yang masih baru agar pemilihan penerima warning akurat.
+  useEffect(() => {
+    if (status !== 'active' || !trackingId) return;
+    const syncPosition = () => {
+      const position = gpsPosRef.current;
+      if (!position || Date.now() - position.timestamp > 30_000) return;
+      void api.post(`/tracking/update/${trackingId}`, { lat: position.lat, lng: position.lng }).catch(() => {});
+    };
+    syncPosition();
+    const interval = window.setInterval(syncPosition, 15000);
+    return () => window.clearInterval(interval);
+  }, [status, trackingId]);
+
   // Timer tick
   useEffect(() => {
     if (status === 'active') {
@@ -215,20 +228,20 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
       const position = gpsPosRef.current;
       if (!position) return;
       try {
-        const res = await api.get('/tracking/warnings/nearby', { params: { lat: position.lat, lng: position.lng } });
+        const res = await api.get('/tracking/warnings/nearby', { params: { tugasId: params.id, lat: position.lat, lng: position.lng } });
         const warnings: NearbyWarning[] = Array.isArray(res.data.data) ? res.data.data : [];
         const warning = warnings.find(item => !seenNearbyWarnings.current.has(item.id));
         if (!warning) return;
         seenNearbyWarnings.current.add(warning.id);
         setNearbyWarning(warning);
         playNotification('beep');
-        speakAnnouncement(`Peringatan dari PPJ ${warning.creator.nama}. Ada kereta yang akan lewat di sekitar Anda.`);
+        speakAnnouncement(`Peringatan dari PPJ ${warning.creator.nama}. Ada kereta yang akan lewat pada jalur ${warning.startPointName} ke ${warning.endPointName}.`);
       } catch { /* polling akan mencoba lagi */ }
     };
     void checkNearbyWarnings();
     const interval = window.setInterval(checkNearbyWarnings, 10000);
     return () => window.clearInterval(interval);
-  }, [status]);
+  }, [status, params.id]);
 
   const fetchTugasDetail = async () => {
     try {
@@ -370,15 +383,15 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
   };
 
   const handleSendNearbyWarning = async () => {
-    if (!gpsPos) {
-      showToast('Posisi GPS belum tersedia.', 'warning');
+    if (!gpsPos || Date.now() - gpsPos.timestamp > 30_000) {
+      showToast('Menunggu posisi GPS terbaru sebelum mengirim warning.', 'warning');
       return;
     }
     try {
       setSendingWarning(true);
-      const res = await api.post('/tracking/warnings', { lat: gpsPos.lat, lng: gpsPos.lng });
+      const res = await api.post('/tracking/warnings', { tugasId: params.id, lat: gpsPos.lat, lng: gpsPos.lng });
       playNotification('chime');
-      showToast(res.data.message || 'Warning dikirim ke PPJ sekitar.', 'success');
+      showToast(res.data.message || 'Warning dikirim ke PPJ terdekat di masing-masing arah pada jalur yang sama.', 'success');
     } catch (err: unknown) {
       const message = axios.isAxiosError<ApiErrorResponse>(err) ? err.response?.data?.message : undefined;
       showToast(message || 'Gagal mengirim warning.', 'error');
@@ -634,7 +647,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
           {nearbyWarning && (
             <div className="w-full max-w-xl bg-blue-50 border-2 border-blue-400 rounded-xl shadow-xl p-3 flex items-center gap-3">
               <div className="w-11 h-11 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0"><span className="material-symbols-outlined">campaign</span></div>
-              <div className="flex-1 min-w-0"><p className="font-bold text-blue-900">Warning dari {nearbyWarning.creator.nama}</p><p className="text-xs text-blue-800">Kereta akan lewat · jarak PPJ sekitar {nearbyWarning.distanceMeters} meter</p></div>
+              <div className="flex-1 min-w-0"><p className="font-bold text-blue-900">Warning dari {nearbyWarning.creator.nama}</p><p className="text-xs text-blue-800">Kereta akan lewat di jalur {nearbyWarning.startPointName} ke {nearbyWarning.endPointName} · jarak PPJ sekitar {nearbyWarning.distanceMeters} meter</p></div>
               <button onClick={() => setNearbyWarning(null)} className="text-blue-700"><span className="material-symbols-outlined">close</span></button>
             </div>
           )}
@@ -835,10 +848,10 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
           <>
             {/* Warning PPJ sekitar FAB */}
             <div className="fixed left-container-padding bottom-[180px] z-40 pointer-events-auto">
-              <button onClick={handleSendNearbyWarning} disabled={sendingWarning || !gpsPos} className="w-16 h-16 bg-blue-600 text-white rounded-full shadow-[0px_8px_24px_rgba(37,99,235,0.35)] flex items-center justify-center hover:scale-105 transition-transform active:scale-95 disabled:opacity-50" title="Peringatkan PPJ dalam radius 1 km">
+              <button onClick={handleSendNearbyWarning} disabled={sendingWarning || !gpsPos} className="w-16 h-16 bg-blue-600 text-white rounded-full shadow-[0px_8px_24px_rgba(37,99,235,0.35)] flex items-center justify-center hover:scale-105 transition-transform active:scale-95 disabled:opacity-50" title="Peringatkan PPJ terdekat di masing-masing arah pada jalur yang sama">
                 <span className="material-symbols-outlined text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>{sendingWarning ? 'hourglass_empty' : 'campaign'}</span>
               </button>
-              <p className="mt-1 bg-white/90 rounded-full px-2 py-0.5 text-[9px] font-bold text-blue-700 text-center shadow">WARNING 1 KM</p>
+              <p className="mt-1 bg-white/90 rounded-full px-2 py-0.5 text-[9px] font-bold text-blue-700 text-center shadow">WARNING PPJ</p>
             </div>
 
             {/* Emergency FAB */}

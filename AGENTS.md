@@ -189,7 +189,7 @@ train_schedules (TrainSchedule)
 warning_alerts (WarningAlert)
 ├── created_by (FK → users.id)
 ├── latitude, longitude
-└── expires_at (warning sementara untuk PPJ radius 1 km)
+└── expires_at (warning sementara untuk penerima tracking terpilih pada jalur sama)
 ```
 
 ---
@@ -209,7 +209,7 @@ warning_alerts (WarningAlert)
 - `GET /api/tugas/:id` → detail satu tugas
 - `GET /api/tracking/active/:tugasId` → cek apakah ada tracking aktif (untuk session restore)
 - `GET /api/tracking/train-alerts` → jadwal kereta aktif pada waktu perjalanan saat ini
-- `POST /api/tracking/warnings`, `GET /api/tracking/warnings/nearby` → warning suara antar-PPJ radius 1 km
+- `POST /api/tracking/warnings`, `GET /api/tracking/warnings/nearby` → warning suara ke PPJ terdekat di masing-masing sisi pada jalur sama
 - `POST /api/tracking/start/:tugasId` → `{ lat, lng }` → `{ trackingId }`
 - `POST /api/tracking/update/:id` → `{ lat, lng }`
 - `POST /api/tracking/stop/:id` → `{ lat, lng }`
@@ -278,7 +278,7 @@ warning_alerts (WarningAlert)
 - Tracking selesai berstatus `not_approved` sampai admin pengelola menyetujui hasil dan memilih status `aman`/`tidak_aman`.
 - PPJ hanya dapat mengunduh PDF setelah approval; admin/KUPT/QC tetap dapat membuka draft untuk review.
 - PDF mencantumkan status tracking `APPROVED`/`NOT APPROVED` dan status keselamatan `AMAN`/`TIDAK AMAN`.
-- Saat tracking aktif, PPJ menerima alert suara jadwal kereta dan dapat mengirim warning suara ke PPJ lain dalam radius 1 km.
+- Saat tracking aktif, PPJ menerima alert suara jadwal kereta dan dapat mengirim warning suara ke PPJ lain terdekat di masing-masing sisi pada pasangan stasiun tugas aktif yang sama (termasuk arah terbalik), tanpa batas radius, dengan GPS maksimal 2 menit terakhir. Warning menyimpan nama stasiun awal–akhir saat dikirim dan mencantumkannya dalam teks serta suara. Deployment membutuhkan migrasi `20260910120000_add_warning_route`; warning lama tanpa informasi jalur tidak ditampilkan.
 
 ### 6. Overpass API + Dijkstra (`lib/railway.ts`)
 - Request `way[railway]` dari Overpass API dalam area bounding box.
@@ -398,3 +398,5 @@ npm run dev                # Menjalankan Next.js dev server di port 3000
 19. **Station dropdown** — Koordinat stasiun hardcoded di `STATIONS` array di `admin/page.tsx`. JANGAN pakai map-click untuk pilih lokasi tugas. Jika perlu tambah stasiun, edit `STATIONS` constant.
 20. **AdminMap read-only** — AdminMap TIDAK punya `pickMode`, `onMapClick`, `tempStart`, `tempEnd`. Hanya display task routes + emergency. JANGAN tambah click handler ke AdminMap.
 21. **Kategori Temuan (Baru)** — Kategori temuan bersifat dinamis dari `kategori_temuan` db. JANGAN lagi gunakan list *hardcode* jika API CRUD telah tersedia.
+
+- Penerima warning disimpan saat pengiriman (maksimal dua sesi tracking); sisi diperkirakan dari proyeksi GPS pada sumbu stasiun awal–akhir. Halaman inspeksi menyinkronkan GPS baru setiap 15 detik.

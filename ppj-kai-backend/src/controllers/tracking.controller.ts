@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../config/database';
+import { hasWarningRoute, isSameWarningRoute, haversineMeters, selectWarningRecipients } from '../utils/warningRoute';
 
 export const getActiveTracking = async (req: Request, res: Response) => {
   try {
@@ -113,9 +114,11 @@ export const updateTracking = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { lat, lng } = req.body;
-
-    const tracking = await prisma.tracking.findUnique({
-      where: { id: parseInt(id) }
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+      return res.status(400).json({ success: false, message: 'Posisi GPS tidak valid' });
+    }
+    const tracking = await prisma.tracking.findFirst({
+      where: { id: Number(id), status: 'started', tugas: { assignedTo: (req as any).user.id, status: 'in_progress' } }
     });
 
     if (!tracking) {
@@ -229,15 +232,6 @@ export const approveTracking = async (req: Request, res: Response) => {
   }
 };
 
-function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number) {
-  const radius = 6371000;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const value = Math.sin(dLat / 2) ** 2
-    + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-  return radius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
-}
-
 export const createNearbyWarning = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id as number;
@@ -247,14 +241,23 @@ export const createNearbyWarning = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Posisi GPS tidak valid' });
     }
 
+    const tugasId = req.body.tugasId === undefined ? undefined : Number(req.body.tugasId);
+    if (tugasId !== undefined && (!Number.isInteger(tugasId) || tugasId <= 0)) {
+      return res.status(400).json({ success: false, message: 'ID tugas tidak valid' });
+    }
     const activeTracking = await prisma.tracking.findFirst({
-      where: { status: 'started', tugas: { assignedTo: userId } },
-      select: { id: true },
+      where: { ...(tugasId === undefined ? {} : { tugasId }), status: 'started', tugas: { assignedTo: userId, status: 'in_progress' } },
+      orderBy: { startTime: 'desc' },
+      select: { id: true, tugas: true },
     });
     if (!activeTracking) {
       return res.status(400).json({ success: false, message: 'Warning hanya dapat dikirim saat tracking aktif' });
     }
 
+    if (!hasWarningRoute(activeTracking.tugas)) {
+      return res.status(400).json({ success: false, message: 'Stasiun awal dan akhir tugas harus tersedia untuk mengirim warning' });
+    }
+    const { startPointName, endPointName } = activeTracking.tugas;
     const now = new Date();
     const recent = await prisma.warningAlert.findFirst({
       where: { createdBy: userId, createdAt: { gte: new Date(now.getTime() - 30_000) } },
@@ -263,16 +266,34 @@ export const createNearbyWarning = async (req: Request, res: Response) => {
       return res.status(429).json({ success: false, message: 'Tunggu 30 detik sebelum mengirim warning lagi' });
     }
 
+    const candidates = await prisma.tracking.findMany({
+      where: { status: 'started', updatedAt: { gte: new Date(now.getTime() - 120_000) }, tugas: { assignedTo: { not: userId }, status: 'in_progress' } },
+      include: { tugas: true },
+    });
+    const recipients = selectWarningRecipients({ latitude, longitude, userId }, activeTracking.tugas,
+      candidates.flatMap(candidate => {
+        const lat = candidate.endLat ?? candidate.startLat;
+        const lng = candidate.endLong ?? candidate.startLong;
+        return lat == null || lng == null ? [] : [{ id: candidate.id, userId: candidate.tugas.assignedTo, latitude: lat, longitude: lng, updatedAt: candidate.updatedAt, tugas: candidate.tugas }];
+      }), now);
+    if (!recipients.length) {
+      return res.status(400).json({ success: false, message: 'Tidak ada PPJ lain pada jalur yang sama dengan tracking aktif dan GPS terbaru' });
+    }
+
     await prisma.warningAlert.deleteMany({ where: { expiresAt: { lt: now } } });
     const data = await prisma.warningAlert.create({
       data: {
         createdBy: userId,
+        startPointName,
+        endPointName,
+        recipientOneTrackingId: recipients[0]!,
+        recipientTwoTrackingId: recipients[1] ?? null,
         latitude,
         longitude,
         expiresAt: new Date(now.getTime() + 2 * 60_000),
       },
     });
-    return res.status(201).json({ success: true, message: 'Warning dikirim ke PPJ dalam radius 1 km', data });
+    return res.status(201).json({ success: true, message: `Warning jalur ${startPointName} ke ${endPointName} dikirim ke ${recipients.length} PPJ terdekat pada jalur yang sama`, data });
   } catch (error) {
     console.error('Create nearby warning error:', error);
     return res.status(500).json({ success: false, message: 'Gagal mengirim warning' });
@@ -288,25 +309,35 @@ export const getNearbyWarnings = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Posisi GPS wajib dikirim' });
     }
 
-    const latitudeRange = 1000 / 111_320;
-    const longitudeRange = 1000 / (111_320 * Math.max(0.1, Math.cos(latitude * Math.PI / 180)));
+    const tugasId = req.query.tugasId === undefined ? undefined : Number(req.query.tugasId);
+    if (tugasId !== undefined && (!Number.isInteger(tugasId) || tugasId <= 0)) {
+      return res.status(400).json({ success: false, message: 'ID tugas tidak valid' });
+    }
+    const activeTracking = await prisma.tracking.findFirst({
+      where: { ...(tugasId === undefined ? {} : { tugasId }), status: 'started', tugas: { assignedTo: userId, status: 'in_progress' } },
+      orderBy: { startTime: 'desc' },
+      select: { id: true, tugas: true },
+    });
+    if (!activeTracking || !hasWarningRoute(activeTracking.tugas)) {
+      return res.json({ success: true, data: [] });
+    }
+
     const warnings = await prisma.warningAlert.findMany({
       where: {
         createdBy: { not: userId },
         expiresAt: { gte: new Date() },
-        latitude: { gte: latitude - latitudeRange, lte: latitude + latitudeRange },
-        longitude: { gte: longitude - longitudeRange, lte: longitude + longitudeRange },
+        OR: [{ recipientOneTrackingId: activeTracking.id }, { recipientTwoTrackingId: activeTracking.id }],
       },
       include: { creator: { select: { nama: true, nipp: true } } },
       orderBy: { createdAt: 'desc' },
-      take: 50,
     });
     const data = warnings
+      .filter(warning => isSameWarningRoute(warning, activeTracking.tugas))
       .map(warning => ({
         ...warning,
         distanceMeters: Math.round(haversineMeters(latitude, longitude, warning.latitude, warning.longitude)),
       }))
-      .filter(warning => warning.distanceMeters <= 1000);
+      .slice(0, 50);
 
     return res.json({ success: true, data });
   } catch (error) {

@@ -121,6 +121,10 @@ model TrainSchedule {
 }
 
 model WarningAlert {
+  recipientOneTrackingId Int? @map("recipient_one_tracking_id")
+  recipientTwoTrackingId Int? @map("recipient_two_tracking_id")
+  startPointName String? @map("start_point_name") @db.VarChar(200)
+  endPointName   String? @map("end_point_name") @db.VarChar(200)
   id        Int      @id @default(autoincrement())
   createdBy Int      @map("created_by")
   creator   User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
