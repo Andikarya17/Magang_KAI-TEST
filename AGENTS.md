@@ -278,6 +278,7 @@ warning_alerts (WarningAlert)
 - Setelah tracking dihentikan, tugas berstatus `need_approval` dan tracking berstatus `not_approved`. Approval admin menetapkan status keselamatan lalu mengubah tugas menjadi `completed`.
 - Endpoint tugas memakai tracking terbaru sebagai sumber kebenaran status. Data lama dengan tugas `completed` tetapi tracking `not_approved` dikirim sebagai `need_approval`, sehingga tetap benar walau migrasi deployment belum dijalankan.
 - Frontend admin dan PPJ juga menormalisasi status dari tracking terbaru sebagai pengaman kompatibilitas; item `not_approved` tidak boleh masuk filter/riwayat `Selesai` walaupun menerima status tugas lama dari backend.
+- Di halaman PPJ, `need_approval` ditempatkan pada tab Riwayat sebagai kartu kuning dan tidak muncul pada tab Tugas. Setelah approval, kartu berubah menjadi `completed`/Selesai dan PDF dapat diunduh.
 - PPJ hanya dapat mengunduh PDF setelah approval; admin/KUPT/QC tetap dapat membuka draft untuk review.
 - PDF mencantumkan status tracking `APPROVED`/`NOT APPROVED` dan status keselamatan `AMAN`/`TIDAK AMAN`.
 - Saat tracking aktif, PPJ menerima alert suara jadwal kereta dan dapat mengirim warning suara ke PPJ lain terdekat di masing-masing sisi pada pasangan stasiun tugas aktif yang sama (termasuk arah terbalik), tanpa batas radius, dengan GPS maksimal 2 menit terakhir. Warning menyimpan nama stasiun awal–akhir saat dikirim dan mencantumkannya dalam teks serta suara. Deployment membutuhkan migrasi `20260910120000_add_warning_route`; warning lama tanpa informasi jalur tidak ditampilkan.

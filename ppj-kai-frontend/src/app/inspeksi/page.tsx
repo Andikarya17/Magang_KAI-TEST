@@ -113,7 +113,7 @@ function formatTime(dateStr: string | null) {
 export default function InspeksiIndexPage() {
   const router = useRouter();
   const [tasks, setTasks] = useState<Tugas[]>([]);
-  const [completedTasks, setCompletedTasks] = useState<Tugas[]>([]);
+  const [historyTasks, setHistoryTasks] = useState<Tugas[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'tugas' | 'riwayat'>('tugas');
   const [selectedDetail, setSelectedDetail] = useState<TugasDetail | null>(null);
@@ -158,10 +158,10 @@ export default function InspeksiIndexPage() {
       try {
         const res = await api.get('/tugas');
         const allTasks: Tugas[] = (Array.isArray(res.data.data) ? res.data.data : []).map(resolveTugasStatus);
-        // Filter: tugas aktif dan tugas selesai (riwayat)
-        const activeTasks = allTasks.filter(t => t.status === 'pending' || t.status === 'in_progress' || t.status === 'need_approval' || t.status === 'missed');
-        const completed = allTasks.filter(t => t.status === 'completed');
-        setCompletedTasks(completed);
+        // Hasil yang sudah dikirim masuk riwayat, termasuk selama menunggu approval.
+        const activeTasks = allTasks.filter(t => t.status === 'pending' || t.status === 'in_progress' || t.status === 'missed');
+        const history = allTasks.filter(t => t.status === 'need_approval' || t.status === 'completed');
+        setHistoryTasks(history);
 
         const getJadwalTime = (t: Tugas) => {
           if (!t.tanggal || !t.jamMulai) return 0;
@@ -216,7 +216,7 @@ export default function InspeksiIndexPage() {
   }
 
   // ─── EMPTY STATE: Tidak ada tugas & riwayat ───
-  if (tasks.length === 0 && completedTasks.length === 0) {
+  if (tasks.length === 0 && historyTasks.length === 0) {
     return (
       <div className="bg-background text-on-surface min-h-screen font-body-lg antialiased flex flex-col">
         {/* Header */}
@@ -280,7 +280,7 @@ export default function InspeksiIndexPage() {
             }`}
           >
             <span className="material-symbols-outlined text-[18px]" style={activeTab === 'riwayat' ? { fontVariationSettings: "'FILL' 1" } : undefined}>history</span>
-            Riwayat ({completedTasks.length})
+            Riwayat ({historyTasks.length})
           </button>
         </div>
 
@@ -439,44 +439,44 @@ export default function InspeksiIndexPage() {
 
         {/* Tab Riwayat */}
         {activeTab === 'riwayat' && (
-          completedTasks.length > 0 ? (
+          historyTasks.length > 0 ? (
             <div className="flex flex-col gap-md">
-              {completedTasks.map(tugas => {
+              {historyTasks.map(tugas => {
                 const distance = haversineKm(
                   tugas.startPointLat, tugas.startPointLong,
                   tugas.endPointLat, tugas.endPointLong
                 );
                 const latestTracking = tugas.tracking?.[0];
+                const needsApproval = tugas.status === 'need_approval' || latestTracking?.approvalStatus !== 'approved';
 
                 return (
                   <div
                     key={tugas.id}
-                    className="group relative bg-white/80 backdrop-blur-2xl border border-white/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-[28px] overflow-hidden flex flex-col hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all duration-300"
+                    className={`group relative backdrop-blur-2xl border shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-[28px] overflow-hidden flex flex-col hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all duration-300 ${needsApproval ? 'bg-amber-50/90 border-amber-200' : 'bg-white/80 border-white/60'}`}
                   >
-                    {/* Green accent for completed */}
-                    <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-green-500 to-emerald-300" />
+                    <div className={`absolute top-0 left-0 right-0 h-1.5 ${needsApproval ? 'bg-gradient-to-r from-amber-500 to-yellow-300' : 'bg-gradient-to-r from-green-500 to-emerald-300'}`} />
 
                     <div className="p-6 flex flex-col gap-5">
                       {/* Title & Status */}
                       <div className="flex justify-between items-start gap-4">
                         <div className="flex-1">
                           <div className="inline-flex items-center gap-1.5 mb-2">
-                            <span className="material-symbols-outlined text-[14px] text-green-500" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                            <span className={`material-symbols-outlined text-[14px] ${needsApproval ? 'text-amber-600' : 'text-green-500'}`} style={{ fontVariationSettings: "'FILL' 1" }}>{needsApproval ? 'pending_actions' : 'check_circle'}</span>
                             <span className="text-[10px] font-bold tracking-[0.2em] text-slate-400 uppercase">Riwayat Inspeksi</span>
                           </div>
                           <h2 className="font-h2 text-xl font-extrabold leading-snug tracking-tight text-slate-800">{tugas.jalur}</h2>
                         </div>
-                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl font-label-sm text-[11px] font-bold uppercase shrink-0 bg-green-500/10 text-green-600 border border-green-500/30">
-                          <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
-                          Selesai
+                        <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-2xl font-label-sm text-[11px] font-bold uppercase shrink-0 border ${needsApproval ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-green-500/10 text-green-600 border-green-500/30'}`}>
+                          <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>{needsApproval ? 'approval' : 'check_circle'}</span>
+                          {needsApproval ? 'Butuh Approval' : 'Selesai'}
                         </span>
                       </div>
 
                       {/* Route Timeline */}
                       <div className="bg-slate-50/70 rounded-2xl p-4 border border-slate-100/80 flex items-center gap-4">
                         <div className="flex flex-col items-center justify-center shrink-0">
-                          <div className="w-3 h-3 rounded-full bg-green-500 ring-4 ring-green-500/15 relative z-10" />
-                          <div className="w-[2px] h-6 bg-gradient-to-b from-green-500/30 to-slate-300/30" />
+                          <div className={`w-3 h-3 rounded-full relative z-10 ${needsApproval ? 'bg-amber-500 ring-4 ring-amber-500/15' : 'bg-green-500 ring-4 ring-green-500/15'}`} />
+                          <div className={`w-[2px] h-6 ${needsApproval ? 'bg-gradient-to-b from-amber-500/30 to-slate-300/30' : 'bg-gradient-to-b from-green-500/30 to-slate-300/30'}`} />
                           <div className="w-3 h-3 rounded-full bg-slate-500 ring-4 ring-slate-500/15 relative z-10" />
                         </div>
                         <div className="flex flex-col justify-between h-[52px] flex-1 py-0.5">
@@ -484,7 +484,7 @@ export default function InspeksiIndexPage() {
                           <span className="font-body-md text-[15px] font-bold leading-none text-slate-700">{tugas.endPointName || 'Titik Akhir'}</span>
                         </div>
                         <div className="bg-white px-4 py-3 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center justify-center shrink-0 min-w-[72px]">
-                          <span className="font-data-heavy text-xl leading-none mb-1 text-green-600">{distance.toFixed(1)}</span>
+                          <span className={`font-data-heavy text-xl leading-none mb-1 ${needsApproval ? 'text-amber-700' : 'text-green-600'}`}>{distance.toFixed(1)}</span>
                           <span className="font-label-sm text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">KM</span>
                         </div>
                       </div>
@@ -527,7 +527,7 @@ export default function InspeksiIndexPage() {
                 <span className="material-symbols-outlined text-[40px] text-slate-300">history</span>
               </div>
               <h3 className="font-h3 text-h3 font-bold text-slate-400 mb-sm">Belum Ada Riwayat</h3>
-              <p className="font-body-md text-slate-400 max-w-xs">Riwayat perjalanan inspeksi yang sudah selesai akan muncul di sini.</p>
+              <p className="font-body-md text-slate-400 max-w-xs">Perjalanan yang sudah dikirim atau selesai disetujui akan muncul di sini.</p>
             </div>
           )
         )}
