@@ -115,7 +115,7 @@ tugas_ppj (TugasPpj)
 ├── start_point_name, end_point_name: String?
 ├── jam_mulai, jam_selesai: String?
 ├── assigned_to: Int (FK → users.id)
-├── status: String (20) → "pending" | "in_progress" | "completed" | "cancelled" | "missed"
+├── status: String (20) → "pending" | "in_progress" | "need_approval" | "completed" | "cancelled" | "missed"
 └── Relasi: tracking
 
 tracking (Tracking)
@@ -275,7 +275,7 @@ warning_alerts (WarningAlert)
 - Saat petugas mengirimkan laporan berstatus "emergency" atau "berat" (tergantung *flag* di db), frontend QC/Admin akan memutar suara alarm darurat secara berulang (looping) hingga ada interaksi klik dari user untuk mematikannya.
 
 ### 5. Approval, PDF, dan Alert Kereta
-- Tracking selesai berstatus `not_approved` sampai admin pengelola menyetujui hasil dan memilih status `aman`/`tidak_aman`.
+- Setelah tracking dihentikan, tugas berstatus `need_approval` dan tracking berstatus `not_approved`. Approval admin menetapkan status keselamatan lalu mengubah tugas menjadi `completed`.
 - PPJ hanya dapat mengunduh PDF setelah approval; admin/KUPT/QC tetap dapat membuka draft untuk review.
 - PDF mencantumkan status tracking `APPROVED`/`NOT APPROVED` dan status keselamatan `AMAN`/`TIDAK AMAN`.
 - Saat tracking aktif, PPJ menerima alert suara jadwal kereta dan dapat mengirim warning suara ke PPJ lain terdekat di masing-masing sisi pada pasangan stasiun tugas aktif yang sama (termasuk arah terbalik), tanpa batas radius, dengan GPS maksimal 2 menit terakhir. Warning menyimpan nama stasiun awal–akhir saat dikirim dan mencantumkannya dalam teks serta suara. Deployment membutuhkan migrasi `20260910120000_add_warning_route`; warning lama tanpa informasi jalur tidak ditampilkan.

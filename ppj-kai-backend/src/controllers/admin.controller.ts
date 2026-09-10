@@ -89,7 +89,7 @@ export const getStats = async (req: AuthRequest, res: Response) => {
       : { user: managedFilter };
 
     const [tugasAktif, tugasSelesai, laporanDarurat] = await Promise.all([
-      prisma.tugasPpj.count({ where: { status: { in: ['pending', 'in_progress'] }, ...tugasWhere } }),
+      prisma.tugasPpj.count({ where: { status: { in: ['pending', 'in_progress', 'need_approval'] }, ...tugasWhere } }),
       prisma.tugasPpj.count({ where: { status: 'completed', ...tugasWhere } }),
       prisma.laporan.count({
         where: {

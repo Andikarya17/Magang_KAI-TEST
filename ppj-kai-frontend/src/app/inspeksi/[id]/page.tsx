@@ -250,8 +250,8 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
       const data = res.data.data;
       setTugas(data);
 
-      // If already completed or missed, redirect or show status
-      if (data?.status === 'completed') {
+      // Tracking yang sudah dikirim tidak dapat dibuka kembali saat menunggu approval.
+      if (data?.status === 'completed' || data?.status === 'need_approval') {
         router.replace(`/inspeksi/${params.id}/selesai`);
         return;
       }

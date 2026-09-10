@@ -63,6 +63,7 @@ interface TugasDetail {
 const statusLabel: Record<string, string> = {
   pending: 'Menunggu',
   in_progress: 'Sedang Berlangsung',
+  need_approval: 'Butuh Approval',
   completed: 'Selesai',
   cancelled: 'Dibatalkan',
   missed: 'Tidak Selesai',
@@ -71,6 +72,7 @@ const statusLabel: Record<string, string> = {
 const statusIcon: Record<string, string> = {
   pending: 'schedule',
   in_progress: 'directions_railway',
+  need_approval: 'approval',
   completed: 'check_circle',
   cancelled: 'cancel',
   missed: 'event_busy',
@@ -79,6 +81,7 @@ const statusIcon: Record<string, string> = {
 const statusStyle: Record<string, string> = {
   pending: 'bg-amber-500/10 text-amber-600 border-amber-500/30',
   in_progress: 'bg-primary-container/20 text-primary border-primary/30',
+  need_approval: 'bg-amber-100 text-amber-800 border-amber-300',
   completed: 'bg-green-500/10 text-green-600 border-green-500/30',
   cancelled: 'bg-error-container/20 text-error border-error/30',
   missed: 'bg-rose-500/10 text-rose-600 border-rose-500/30',
@@ -155,7 +158,7 @@ export default function InspeksiIndexPage() {
         const res = await api.get('/tugas');
         const allTasks: Tugas[] = res.data.data || [];
         // Filter: tugas aktif dan tugas selesai (riwayat)
-        const activeTasks = allTasks.filter(t => t.status === 'pending' || t.status === 'in_progress' || t.status === 'missed');
+        const activeTasks = allTasks.filter(t => t.status === 'pending' || t.status === 'in_progress' || t.status === 'need_approval' || t.status === 'missed');
         const completed = allTasks.filter(t => t.status === 'completed');
         setCompletedTasks(completed);
 
@@ -298,7 +301,7 @@ export default function InspeksiIndexPage() {
           let isBelumWaktunya = false;
           let isTerlewat = tugas.status === 'missed';
           let windowOpenTimeStr = '';
-          if (tugas.tanggal && tugas.jamMulai && tugas.status !== 'missed') {
+          if (tugas.tanggal && tugas.jamMulai && tugas.status !== 'missed' && tugas.status !== 'need_approval') {
             const [hh, mm] = tugas.jamMulai.split(':').map(Number);
             const tugasDate = new Date(tugas.tanggal);
             // Build scheduled time — tanggal from API is UTC midnight, jam_mulai is WIB
@@ -322,22 +325,25 @@ export default function InspeksiIndexPage() {
             }
           }
 
-          const isDisabled = isBelumWaktunya || isTerlewat;
+          const isNeedApproval = tugas.status === 'need_approval';
+          const isDisabled = isBelumWaktunya || isTerlewat || isNeedApproval;
           const CardContainer = isDisabled ? 'div' : Link;
 
           return (
             <CardContainer
               key={tugas.id}
               href={isDisabled ? '#' : `/inspeksi/${tugas.id}`}
-              className={`group relative bg-white/80 backdrop-blur-2xl border border-white/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-[28px] overflow-hidden flex flex-col ${
-                isDisabled
-                  ? 'opacity-70 grayscale-[0.3] cursor-not-allowed'
-                  : 'hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all duration-300 hover:-translate-y-1.5'
+              className={`group relative backdrop-blur-2xl border shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-[28px] overflow-hidden flex flex-col ${
+                isNeedApproval ? 'bg-amber-50/90 border-amber-200 cursor-default'
+                : isDisabled
+                  ? 'bg-white/80 border-white/60 opacity-70 grayscale-[0.3] cursor-not-allowed'
+                  : 'bg-white/80 border-white/60 hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all duration-300 hover:-translate-y-1.5'
               }`}
             >
               {/* Modern Status Gradient Accent */}
               <div className={`absolute top-0 left-0 right-0 h-1.5 ${
-                tugas.status === 'in_progress' ? 'bg-gradient-to-r from-primary to-blue-400'
+                tugas.status === 'need_approval' ? 'bg-gradient-to-r from-amber-500 to-yellow-300'
+                : tugas.status === 'in_progress' ? 'bg-gradient-to-r from-primary to-blue-400'
                 : isTerlewat ? 'bg-gradient-to-r from-rose-400 to-rose-200'
                 : isBelumWaktunya ? 'bg-slate-300'
                 : 'bg-gradient-to-r from-amber-400 to-amber-200'
@@ -404,10 +410,10 @@ export default function InspeksiIndexPage() {
 
                   <div className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-all duration-300 ${
                     isDisabled
-                      ? isTerlewat ? 'bg-rose-100 text-rose-500 shadow-none' : 'bg-slate-200 text-slate-500 shadow-none'
+                      ? isNeedApproval ? 'bg-amber-100 text-amber-700 shadow-none' : isTerlewat ? 'bg-rose-100 text-rose-500 shadow-none' : 'bg-slate-200 text-slate-500 shadow-none'
                       : 'bg-slate-900 text-white group-hover:bg-primary shadow-slate-900/10 group-hover:shadow-primary/25'
                   }`}>
-                    {isBelumWaktunya ? `Dibuka ${windowOpenTimeStr}` : isTerlewat ? 'Terlewat' : (tugas.status === 'in_progress' ? 'Lanjutkan' : 'Buka')}
+                    {isNeedApproval ? 'Menunggu Approval' : isBelumWaktunya ? `Dibuka ${windowOpenTimeStr}` : isTerlewat ? 'Terlewat' : (tugas.status === 'in_progress' ? 'Lanjutkan' : 'Buka')}
                     {!isDisabled && (
                       <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform duration-300">arrow_forward</span>
                     )}

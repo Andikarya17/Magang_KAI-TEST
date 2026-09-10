@@ -55,6 +55,7 @@ interface AdminMapProps {
 const STATUS_COLOR: Record<string, string> = {
   pending: '#94a3b8',
   in_progress: '#005bac',
+  need_approval: '#f59e0b',
   completed: '#22c55e',
 };
 

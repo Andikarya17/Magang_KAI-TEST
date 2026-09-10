@@ -56,6 +56,7 @@ interface Props {
 const STATUS_LABEL: Record<string, string> = {
   pending: 'Pending',
   in_progress: 'Berlangsung',
+  need_approval: 'Butuh Approval',
   completed: 'Selesai',
   cancelled: 'Dibatalkan',
   missed: 'Terlewat',
@@ -88,6 +89,7 @@ export default function TaskDetailModal({ tugas, jenisLabel, jenisColor, isDownl
   const latestTracking = tugas.tracking?.[0] ?? null;
   const laporan = latestTracking?.laporan ?? [];
   const completed = tugas.status === 'completed';
+  const needsApproval = tugas.status === 'need_approval';
 
   return (
     <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -107,15 +109,15 @@ export default function TaskDetailModal({ tugas, jenisLabel, jenisColor, isDownl
 
         <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5">
           <div className="text-center">
-            <div className={`w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-3 ${completed ? 'bg-emerald-100 text-emerald-600' : tugas.status === 'in_progress' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
-              <span className="material-symbols-outlined text-[36px]">{completed ? 'check_circle' : tugas.status === 'in_progress' ? 'directions_walk' : 'assignment'}</span>
+            <div className={`w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-3 ${completed ? 'bg-emerald-100 text-emerald-600' : needsApproval ? 'bg-amber-100 text-amber-700' : tugas.status === 'in_progress' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
+              <span className="material-symbols-outlined text-[36px]">{completed ? 'check_circle' : needsApproval ? 'approval' : tugas.status === 'in_progress' ? 'directions_walk' : 'assignment'}</span>
             </div>
             <h2 className="text-xl font-extrabold text-slate-800">{tugas.jalur}</h2>
             <p className="text-sm text-slate-500 mt-1">{tugas.startPointName || 'Titik Awal'} → {tugas.endPointName || 'Titik Akhir'}</p>
             <div className="flex items-center justify-center gap-2 mt-2">
               <span className="text-xs font-semibold text-slate-500">{new Date(tugas.tanggal).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span>
               <span className="text-slate-300">•</span>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${completed ? 'bg-emerald-100 text-emerald-700' : tugas.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>{STATUS_LABEL[tugas.status] ?? tugas.status}</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${completed ? 'bg-emerald-100 text-emerald-700' : needsApproval ? 'bg-amber-100 text-amber-800' : tugas.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>{STATUS_LABEL[tugas.status] ?? tugas.status}</span>
             </div>
           </div>
 
@@ -208,7 +210,7 @@ export default function TaskDetailModal({ tugas, jenisLabel, jenisColor, isDownl
                 ))}
               </div>
             </section>
-          ) : latestTracking && completed ? (
+          ) : latestTracking && (completed || needsApproval) ? (
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-5 text-center">
               <span className="material-symbols-outlined text-emerald-600 text-[36px]">verified</span>
               <p className="font-bold text-emerald-800 mt-1">Tidak Ada Kendala</p>

@@ -163,28 +163,29 @@ export const stopTracking = async (req: Request, res: Response) => {
 
     const laporanCount = await prisma.laporan.count({ where: { trackingId: tracking.id } });
 
-    await prisma.tracking.update({
-      where: { id: tracking.id },
-      data: {
-        endTime: new Date(),
-        endLat: lat || 0,
-        endLong: lng || 0,
-        durasi: durasiDetik,
-        status: 'stopped',
-        fotoSelesai: fotoSelesai || null,
-        routePath: routePathStr,
-        approvalStatus: 'not_approved',
-        safetyStatus: laporanCount > 0 ? 'tidak_aman' : 'aman',
-        approvedAt: null,
-        approvedBy: null,
-      }
-    });
-
-    // Update tugas status
-    await prisma.tugasPpj.update({
-      where: { id: tracking.tugasId },
-      data: { status: 'completed' }
-    });
+    await prisma.$transaction([
+      prisma.tracking.update({
+        where: { id: tracking.id },
+        data: {
+          endTime: new Date(),
+          endLat: lat || 0,
+          endLong: lng || 0,
+          durasi: durasiDetik,
+          status: 'stopped',
+          fotoSelesai: fotoSelesai || null,
+          routePath: routePathStr,
+          approvalStatus: 'not_approved',
+          safetyStatus: laporanCount > 0 ? 'tidak_aman' : 'aman',
+          approvedAt: null,
+          approvedBy: null,
+        },
+      }),
+      // Hasil inspeksi menunggu keputusan admin sebelum masuk ke status selesai.
+      prisma.tugasPpj.update({
+        where: { id: tracking.tugasId },
+        data: { status: 'need_approval' },
+      }),
+    ]);
 
     return res.json({ success: true });
   } catch (error) {
@@ -215,17 +216,26 @@ export const approveTracking = async (req: Request, res: Response) => {
     if (tracking.status !== 'stopped') {
       return res.status(400).json({ success: false, message: 'Tracking hanya dapat disetujui setelah inspeksi selesai' });
     }
+    if (tracking.approvalStatus === 'approved') {
+      return res.status(400).json({ success: false, message: 'Hasil tracking sudah disetujui' });
+    }
 
-    const data = await prisma.tracking.update({
-      where: { id: trackingId },
-      data: {
-        approvalStatus: 'approved',
-        safetyStatus,
-        approvedAt: new Date(),
-        approvedBy: adminId,
-      },
-    });
-    return res.json({ success: true, message: 'Hasil tracking berhasil disetujui', data });
+    const [data] = await prisma.$transaction([
+      prisma.tracking.update({
+        where: { id: trackingId },
+        data: {
+          approvalStatus: 'approved',
+          safetyStatus,
+          approvedAt: new Date(),
+          approvedBy: adminId,
+        },
+      }),
+      prisma.tugasPpj.update({
+        where: { id: tracking.tugasId },
+        data: { status: 'completed' },
+      }),
+    ]);
+    return res.json({ success: true, message: 'Hasil tracking berhasil disetujui', data, tugasStatus: 'completed' });
   } catch (error) {
     console.error('Approve tracking error:', error);
     return res.status(500).json({ success: false, message: 'Gagal menyetujui hasil tracking' });

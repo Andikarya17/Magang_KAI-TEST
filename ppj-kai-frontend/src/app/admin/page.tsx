@@ -44,8 +44,8 @@ const ROLE_BADGE: Record<string, { label: string; bg: string }> = {
 };
 const ROLE_LABEL: Record<string, string> = { admin: 'Admin', qc: 'QC', kupt: 'KUPT', ppj: 'PPJ' };
 
-const STATUS_COLOR: Record<string, string> = { pending: 'bg-surface-container text-on-surface-variant border-outline-variant', in_progress: 'bg-primary-container/20 text-primary border-primary/30', completed: 'bg-primary-fixed text-on-primary-fixed-variant border-transparent' };
-const STATUS_LABEL: Record<string, string> = { pending: 'Pending', in_progress: 'Berlangsung', completed: 'Selesai' };
+const STATUS_COLOR: Record<string, string> = { pending: 'bg-surface-container text-on-surface-variant border-outline-variant', in_progress: 'bg-primary-container/20 text-primary border-primary/30', need_approval: 'bg-amber-100 text-amber-800 border-amber-300', completed: 'bg-primary-fixed text-on-primary-fixed-variant border-transparent' };
+const STATUS_LABEL: Record<string, string> = { pending: 'Pending', in_progress: 'Berlangsung', need_approval: 'Butuh Approval', completed: 'Selesai' };
 
 const ALERT_SOUND_STORAGE_KEY = 'admin_alert_sound';
 const ALERT_SOUND_OPTIONS: NotificationSound[] = ['off', 'siren', 'beep', 'chime'];
@@ -99,7 +99,7 @@ export default function AdminPage() {
 
   // Task list filter state
   const [tugasSearchQuery, setTugasSearchQuery] = useState('');
-  const [tugasStatusFilter, setTugasStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed'>('all');
+  const [tugasStatusFilter, setTugasStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'need_approval' | 'completed'>('all');
   const [tugasDateFrom, setTugasDateFrom] = useState('');
   const [tugasDateTo, setTugasDateTo] = useState('');
   const [selectedTugasDetail, setSelectedTugasDetail] = useState<Tugas | null>(null);
@@ -610,6 +610,7 @@ export default function AdminPage() {
       const res = await api.post(`/admin/tracking/${trackingId}/approve`, { safetyStatus });
       setSelectedTugasDetail(previous => previous ? {
         ...previous,
+        status: res.data.tugasStatus ?? 'completed',
         tracking: previous.tracking?.map((tracking, index) => index === 0 ? { ...tracking, ...res.data.data } : tracking),
       } : previous);
       showToast('Hasil tracking berhasil di-approve.', 'success');
@@ -1074,6 +1075,7 @@ export default function AdminPage() {
                           ['all', 'Semua'],
                           ['pending', 'Pending'],
                           ['in_progress', 'Berlangsung'],
+                          ['need_approval', 'Butuh Approval'],
                           ['completed', 'Selesai'],
                         ] as const).map(([value, label]) => (
                           <button
@@ -1139,8 +1141,8 @@ export default function AdminPage() {
                       const latestTracking = t.tracking?.[0];
                       const laporanCount = latestTracking?.laporan?.length ?? 0;
                       return (
-                        <button key={t.id} type="button" onClick={() => setSelectedTugasDetail(t)} className="w-full text-left bg-slate-50 rounded-2xl border border-slate-200 p-5 hover:border-primary/50 hover:shadow-md transition-all group relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary/40">
-                          <div className={`absolute top-0 left-0 w-1.5 h-full ${t.status === 'completed' ? 'bg-emerald-500' : t.status === 'in_progress' ? 'bg-primary' : 'bg-slate-300'}`}></div>
+                        <button key={t.id} type="button" onClick={() => setSelectedTugasDetail(t)} className={`w-full text-left rounded-2xl border p-5 hover:shadow-md transition-all group relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary/40 ${t.status === 'need_approval' ? 'bg-amber-50 border-amber-300 hover:border-amber-400' : 'bg-slate-50 border-slate-200 hover:border-primary/50'}`}>
+                          <div className={`absolute top-0 left-0 w-1.5 h-full ${t.status === 'completed' ? 'bg-emerald-500' : t.status === 'need_approval' ? 'bg-amber-400' : t.status === 'in_progress' ? 'bg-primary' : 'bg-slate-300'}`}></div>
                           <div className="pl-3">
                             <div className="flex justify-between items-start mb-2">
                               <div className="flex-1 min-w-0">
@@ -1954,8 +1956,8 @@ export default function AdminPage() {
                     const laporanList = latestTracking?.laporan || [];
                     
                     return (
-                      <div key={t.id} className="bg-white rounded-xl border border-slate-200 shadow-sm relative overflow-hidden mb-4">
-                        <div className={`absolute top-0 left-0 w-1.5 h-full ${t.status === 'completed' ? 'bg-primary' : t.status === 'in_progress' ? 'bg-blue-500' : 'bg-slate-300'}`}></div>
+                      <div key={t.id} className={`rounded-xl border shadow-sm relative overflow-hidden mb-4 ${t.status === 'need_approval' ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'}`}>
+                        <div className={`absolute top-0 left-0 w-1.5 h-full ${t.status === 'completed' ? 'bg-primary' : t.status === 'need_approval' ? 'bg-amber-400' : t.status === 'in_progress' ? 'bg-blue-500' : 'bg-slate-300'}`}></div>
                         
                         <div className="p-4 pl-5 border-b border-slate-100">
                           <div className="flex justify-between items-start gap-2 mb-1">

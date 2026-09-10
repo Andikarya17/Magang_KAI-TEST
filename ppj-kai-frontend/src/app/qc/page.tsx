@@ -78,11 +78,13 @@ function petugasColor(nipp: string): string {
 const STATUS_LABEL: Record<string, string> = {
   pending: 'Pending',
   in_progress: 'Berlangsung',
+  need_approval: 'Butuh Approval',
   completed: 'Selesai',
 };
 const STATUS_COLOR: Record<string, string> = {
   pending: 'bg-amber-50 text-amber-700 border-amber-200',
   in_progress: 'bg-blue-50 text-blue-700 border-blue-200',
+  need_approval: 'bg-amber-100 text-amber-800 border-amber-300',
   completed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
 };
 

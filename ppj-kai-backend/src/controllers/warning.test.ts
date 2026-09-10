@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import prisma from '../config/database';
-import { createNearbyWarning, getNearbyWarnings } from './tracking.controller';
+import { approveTracking, createNearbyWarning, getNearbyWarnings, stopTracking } from './tracking.controller';
 
 const route = { startPointLat: -7.8, startPointLong: 110.3, endPointLat: -7.8, endPointLong: 110.5, startPointName: 'Sta. Yogyakarta', endPointName: 'Sta. Lempuyangan' };
 const request = () => ({ user: { id: 7 }, query: { tugasId: '12', lat: '-7.8', lng: '110.37' }, body: { tugasId: 12, lat: -7.8, lng: 110.37 } } as any);
@@ -90,4 +90,45 @@ test('no eligible recipient reports failure without saving a warning', async () 
   await createNearbyWarning(request(), res);
   assert.equal(res.statusCode, 400);
   assert.match(res.body.message, /Tidak ada PPJ/);
+});
+
+test('stopping tracking moves the assignment to need approval', async () => {
+  stub(prisma.tracking, 'findUnique', async () => ({ id: 91, tugasId: 12, startTime: new Date(Date.now() - 60_000) }));
+  stub(prisma.laporan, 'count', async () => 0);
+  stub(prisma.tracking, 'update', async ({ data }: any) => {
+    assert.equal(data.status, 'stopped');
+    assert.equal(data.approvalStatus, 'not_approved');
+    return { id: 91, ...data };
+  });
+  stub(prisma.tugasPpj, 'update', async ({ where, data }: any) => {
+    assert.equal(where.id, 12);
+    assert.equal(data.status, 'need_approval');
+    return { id: 12, ...data };
+  });
+  stub(prisma, '$transaction', async (operations: Promise<any>[]) => Promise.all(operations));
+  const req = { params: { id: '91' }, body: { lat: -7.8, lng: 110.37 } } as any;
+  const res = response();
+  await stopTracking(req, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.success, true);
+});
+
+test('approving tracking atomically completes the assignment', async () => {
+  stub(prisma.tracking, 'findFirst', async () => ({ id: 91, tugasId: 12, status: 'stopped', approvalStatus: 'not_approved' }));
+  stub(prisma.tracking, 'update', async ({ data }: any) => {
+    assert.equal(data.approvalStatus, 'approved');
+    assert.equal(data.safetyStatus, 'aman');
+    return { id: 91, ...data };
+  });
+  stub(prisma.tugasPpj, 'update', async ({ where, data }: any) => {
+    assert.equal(where.id, 12);
+    assert.equal(data.status, 'completed');
+    return { id: 12, ...data };
+  });
+  stub(prisma, '$transaction', async (operations: Promise<any>[]) => Promise.all(operations));
+  const req = { params: { id: '91' }, body: { safetyStatus: 'aman' }, user: { id: 7 } } as any;
+  const res = response();
+  await approveTracking(req, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.tugasStatus, 'completed');
 });
