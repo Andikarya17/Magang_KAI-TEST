@@ -535,6 +535,7 @@ export default function AdminPage() {
       await api.post('/admin/tugas', form);
       setShowTaskModal(false);
       setForm({ jalur: '', tanggal: '', assignedTo: '', startPointName: '', endPointName: '', startPointLat: '', startPointLong: '', endPointLat: '', endPointLong: '', startMapLocationId: '', endMapLocationId: '', jamMulai: '', jamSelesai: '' });
+      showToast('Penugasan berhasil ditambahkan.', 'success');
       fetchAll();
     } catch (e: unknown) { console.error(e); showToast(getApiErrorMessage(e, 'Gagal membuat tugas.'), 'error'); }
     finally { setSubmitting(false); }
@@ -542,7 +543,13 @@ export default function AdminPage() {
 
   const handleDeleteTugas = async (id: number) => {
     if (!(await showConfirm('Hapus tugas ini?'))) return;
-    try { await api.delete(`/admin/tugas/${id}`); fetchAll(); } catch { showToast('Gagal menghapus.', 'error'); }
+    try {
+      await api.delete(`/admin/tugas/${id}`);
+      showToast('Penugasan berhasil dihapus.', 'success');
+      fetchAll();
+    } catch (e: unknown) {
+      showToast(getApiErrorMessage(e, 'Gagal menghapus penugasan.'), 'error');
+    }
   };
 
   const handleAddPetugas = async () => {
