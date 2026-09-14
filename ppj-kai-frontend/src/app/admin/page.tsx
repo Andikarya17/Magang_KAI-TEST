@@ -602,11 +602,63 @@ export default function AdminPage() {
     // Reset file input so the same file can be selected again
     if (fileInputRef.current) fileInputRef.current.value = '';
 
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
       setImportLoading(true);
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = firstSheetName ? workbook.Sheets[firstSheetName] : undefined;
+
+      // Normalisasi nilai jam sebelum upload. Excel menyimpan sel jam sebagai
+      // pecahan hari (contoh 08:00 = 0.333333...), sedangkan backend lama
+      // mengubah angka panjang tersebut menjadi string dan gagal di VARCHAR(10).
+      if (worksheet?.['!ref']) {
+        const range = XLSX.utils.decode_range(worksheet['!ref']);
+        const timeColumns: number[] = [];
+        for (let column = range.s.c; column <= range.e.c; column++) {
+          const headerCell = worksheet[XLSX.utils.encode_cell({ r: range.s.r, c: column })];
+          const header = String(headerCell?.v ?? '').trim().toLowerCase();
+          if (header.startsWith('jam mulai') || header.startsWith('jam selesai')) timeColumns.push(column);
+        }
+
+        for (let row = range.s.r + 1; row <= range.e.r; row++) {
+          for (const column of timeColumns) {
+            const address = XLSX.utils.encode_cell({ r: row, c: column });
+            const cell = worksheet[address];
+            if (!cell || typeof cell.v !== 'number' || !Number.isFinite(cell.v)) continue;
+
+            let totalMinutes: number | null = null;
+            if (cell.v >= 0 && cell.v < 1) {
+              totalMinutes = Math.round(cell.v * 24 * 60) % (24 * 60);
+            } else if (cell.v >= 1 && cell.v <= 23) {
+              totalMinutes = Math.round(cell.v * 60);
+            } else if (!Number.isInteger(cell.v)) {
+              totalMinutes = Math.round((cell.v - Math.floor(cell.v)) * 24 * 60) % (24 * 60);
+            } else if (cell.v >= 100 && cell.v <= 2359) {
+              const hours = Math.floor(cell.v / 100);
+              const minutes = cell.v % 100;
+              if (hours <= 23 && minutes <= 59) totalMinutes = hours * 60 + minutes;
+            }
+
+            if (totalMinutes !== null && totalMinutes >= 0 && totalMinutes < 24 * 60) {
+              const hours = Math.floor(totalMinutes / 60);
+              const minutes = totalMinutes % 60;
+              cell.t = 's';
+              cell.v = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+              cell.w = cell.v;
+              delete cell.z;
+            }
+          }
+        }
+      }
+
+      const normalizedFile = new File(
+        [XLSX.write(workbook, { type: 'array', bookType: 'xlsx' })],
+        file.name.replace(/\.xls$/i, '.xlsx'),
+        { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+      );
+      const formData = new FormData();
+      formData.append('file', normalizedFile);
       const res = await api.post('/admin/tugas/import', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
