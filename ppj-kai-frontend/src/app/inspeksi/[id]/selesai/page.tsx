@@ -348,7 +348,7 @@ export default function InspeksiSelesaiPage({ params }: { params: { id: string }
       </main>
 
       {/* Bottom Action */}
-      <div className="fixed bottom-0 left-0 right-0 bg-surface/90 backdrop-blur-xl px-container-padding py-md shadow-[0px_-8px_24px_rgba(0,0,0,0.05)] z-40 border-t border-outline-variant/10">
+      <div className="fixed bottom-0 left-0 right-0 bg-surface/90 backdrop-blur-xl px-container-padding py-md shadow-[0px_-8px_24px_rgba(0,0,0,0.05)] z-[1000] border-t border-outline-variant/10">
         <div className="max-w-xl mx-auto flex flex-col gap-sm">
           <button
             onClick={handleDownloadPdf}

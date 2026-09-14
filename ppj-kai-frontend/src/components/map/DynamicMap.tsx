@@ -223,7 +223,7 @@ export default function DynamicMap({ lat, lng, zoom = 16, trackPath, routeStart,
   }, [routeStartLat, routeStartLng, routeStartName, routeEndLat, routeEndLng, routeEndName, routeOpacity]);
 
   return (
-    <div className="w-full h-full relative">
+    <div className="w-full h-full relative isolate z-0">
       <div ref={containerRef} className="w-full h-full" />
       {loadingRoute && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-surface/90 backdrop-blur-sm rounded-full px-md py-xs shadow-md flex items-center gap-sm font-label-sm text-on-surface z-[500] pointer-events-none">
