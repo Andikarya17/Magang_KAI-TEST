@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import prisma from '../config/database';
 import * as XLSX from 'xlsx';
-import { findStationMatch, normalizeNipp, normalizeStationName } from '../utils/importMatching';
+import { findStationMatch, normalizeNipp, normalizeStationName, parseImportTime } from '../utils/importMatching';
 import { ensureMapLocationsTable } from '../lib/mapLocationsTable';
 import { resolveTugasStatus } from '../utils/tugasStatus';
 
@@ -918,8 +918,8 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
       const rawStart = String(row[2] || '').trim();
       const rawEnd = String(row[3] || '').trim();
       const rawTanggal = String(row[4] || '').trim();
-      const rawJamMulai = String(row[5] || '').trim();
-      const rawJamSelesai = String(row[6] || '').trim();
+      const rawJamMulai = row[5];
+      const rawJamSelesai = row[6];
 
       // Validate required fields
       if (!rawNipp) {
@@ -989,6 +989,19 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
         continue;
       }
 
+      // Jam yang diketik langsung di Excel biasanya dibaca sebagai angka pecahan
+      // (contoh 08:00 = 0.333333), bukan string "08:00".
+      const jamMulai = parseImportTime(rawJamMulai);
+      const jamSelesai = parseImportTime(rawJamSelesai);
+      if (!jamMulai.valid) {
+        results.push({ row: rowNum, status: 'error', message: `Jam Mulai "${String(rawJamMulai)}" tidak valid (gunakan format HH:mm)` });
+        continue;
+      }
+      if (!jamSelesai.valid) {
+        results.push({ row: rowNum, status: 'error', message: `Jam Selesai "${String(rawJamSelesai)}" tidak valid (gunakan format HH:mm)` });
+        continue;
+      }
+
       // Build jalur name
       const jalur = `${startStation.name} → ${endStation.name}`;
 
@@ -1013,8 +1026,8 @@ export const importTugasFromExcel = async (req: AuthRequest, res: Response) => {
               endPointLong: endStation.lng,
               startPointName: startStation.name,
               endPointName: endStation.name,
-              jamMulai: rawJamMulai || null,
-              jamSelesai: rawJamSelesai || null,
+              jamMulai: jamMulai.value,
+              jamSelesai: jamSelesai.value,
               assignedTo: petugas.id,
               status: 'pending',
             },

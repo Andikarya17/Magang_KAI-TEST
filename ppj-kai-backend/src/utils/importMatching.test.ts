@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { findStationMatch, normalizeNipp, normalizeStationName } from './importMatching';
+import { findStationMatch, normalizeNipp, normalizeStationName, parseImportTime } from './importMatching';
 
 const stations = [
   { name: 'Sta. Lempuyangan' },
@@ -38,4 +38,16 @@ test('titik MAP custom menggunakan pencocokan toleran yang sama', () => {
 
 test('teks yang terlalu berbeda tidak dipaksakan ke suatu stasiun', () => {
   assert.equal(findStationMatch('stasiun tidak dikenal', stations), null);
+});
+
+test('jam dari baris tambahan Excel dikonversi dari angka serial ke HH:mm', () => {
+  assert.deepEqual(parseImportTime(8 / 24), { valid: true, value: '08:00' });
+  assert.deepEqual(parseImportTime(16.5 / 24), { valid: true, value: '16:30' });
+});
+
+test('jam teks dinormalisasi dan nilai tidak valid ditolak', () => {
+  assert.deepEqual(parseImportTime('8:05'), { valid: true, value: '08:05' });
+  assert.deepEqual(parseImportTime('08:05:00'), { valid: true, value: '08:05' });
+  assert.deepEqual(parseImportTime(8), { valid: false, value: null });
+  assert.deepEqual(parseImportTime('25:00'), { valid: false, value: null });
 });

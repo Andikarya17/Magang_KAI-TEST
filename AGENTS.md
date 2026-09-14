@@ -241,6 +241,7 @@ warning_alerts (WarningAlert)
 - `GET /api/admin/tugas/template`, `POST /api/admin/tugas/import` → Template dan proses Import Excel
   - Import menerima petugas aktif yang belum masuk kelolaan dan otomatis mengaitkannya ke admin/KUPT setelah baris valid berhasil disimpan.
   - NIPP mengabaikan kapital/spasi; nama stasiun mengabaikan kapital/spasi/tanda baca dan menoleransi typo kecil yang tidak ambigu.
+  - Kolom jam menerima teks `HH:mm` maupun angka serial waktu Excel; angka serial dinormalisasi ke `HH:mm` sebelum disimpan agar import multi-baris hasil input langsung di Excel tetap valid.
   - Import ADMIN mencocokkan titik awal/akhir terhadap gabungan stasiun dan titik MAP milik admin; template terbaru menyertakan sheet `Daftar Titik Pengecekan`.
 
 ### Guest / QC / KUPT (requireRole('guest', 'qc', 'kupt'))

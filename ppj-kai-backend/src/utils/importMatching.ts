@@ -50,6 +50,53 @@ export type StationMatch<T extends Station> = {
   distance: number;
 };
 
+export type ImportTimeResult =
+  | { valid: true; value: string | null }
+  | { valid: false; value: null };
+
+/**
+ * Excel menyimpan jam yang diketik pengguna sebagai pecahan satu hari
+ * (misalnya 08:00 menjadi 0.333333...). Template bawaan memakai teks, sehingga
+ * kedua bentuk harus diterima agar baris tambahan tidak gagal di kolom VARCHAR(10).
+ */
+export function parseImportTime(value: unknown): ImportTimeResult {
+  if (value === null || value === undefined || String(value).trim() === '') {
+    return { valid: true, value: null };
+  }
+
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value < 0 || value >= 1) return { valid: false, value: null };
+
+    const totalMinutes = Math.round(value * 24 * 60) % (24 * 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return {
+      valid: true,
+      value: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`,
+    };
+  }
+
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return {
+      valid: true,
+      value: `${String(value.getUTCHours()).padStart(2, '0')}:${String(value.getUTCMinutes()).padStart(2, '0')}`,
+    };
+  }
+
+  const text = String(value).trim();
+  const match = text.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return { valid: false, value: null };
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return { valid: false, value: null };
+
+  return {
+    valid: true,
+    value: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`,
+  };
+}
+
 /**
  * Mengembalikan satu kandidat stasiun yang paling dekat. Kandidat dengan skor seri
  * ditolak agar typo tidak menyebabkan penugasan ke stasiun yang ambigu.
