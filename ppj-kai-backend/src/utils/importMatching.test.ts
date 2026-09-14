@@ -47,7 +47,15 @@ test('jam dari baris tambahan Excel dikonversi dari angka serial ke HH:mm', () =
 
 test('jam teks dinormalisasi dan nilai tidak valid ditolak', () => {
   assert.deepEqual(parseImportTime('8:05'), { valid: true, value: '08:05' });
+  assert.deepEqual(parseImportTime('08.05'), { valid: true, value: '08:05' });
   assert.deepEqual(parseImportTime('08:05:00'), { valid: true, value: '08:05' });
-  assert.deepEqual(parseImportTime(8), { valid: false, value: null });
+  assert.deepEqual(parseImportTime('08:05 WIB'), { valid: true, value: '08:05' });
+  assert.deepEqual(parseImportTime(8), { valid: true, value: '08:00' });
+  assert.deepEqual(parseImportTime(8.5), { valid: true, value: '08:30' });
+  assert.deepEqual(parseImportTime(800), { valid: true, value: '08:00' });
+  assert.deepEqual(parseImportTime(1630), { valid: true, value: '16:30' });
+  assert.deepEqual(parseImportTime('0.3333333333333333'), { valid: true, value: '08:00' });
+  assert.deepEqual(parseImportTime(45500.75), { valid: true, value: '18:00' });
   assert.deepEqual(parseImportTime('25:00'), { valid: false, value: null });
+  assert.deepEqual(parseImportTime(2460), { valid: false, value: null });
 });

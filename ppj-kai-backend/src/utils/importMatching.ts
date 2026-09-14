@@ -54,10 +54,48 @@ export type ImportTimeResult =
   | { valid: true; value: string | null }
   | { valid: false; value: null };
 
+function formatImportTime(hours: number, minutes: number): ImportTimeResult {
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return { valid: false, value: null };
+  }
+  return {
+    valid: true,
+    value: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`,
+  };
+}
+
+function parseNumericImportTime(value: number): ImportTimeResult {
+  if (!Number.isFinite(value) || value < 0) return { valid: false, value: null };
+
+  // Nilai waktu asli Excel adalah pecahan satu hari.
+  if (value < 1) {
+    const totalMinutes = Math.round(value * 24 * 60) % (24 * 60);
+    return formatImportTime(Math.floor(totalMinutes / 60), totalMinutes % 60);
+  }
+
+  // Input angka biasa seperti 8, 8.5, 800, atau 1630.
+  if (value <= 23) {
+    const hours = Math.floor(value);
+    const minutes = Math.round((value - hours) * 60);
+    return minutes === 60 ? formatImportTime(hours + 1, 0) : formatImportTime(hours, minutes);
+  }
+  if (Number.isInteger(value) && value >= 100 && value <= 2359) {
+    return formatImportTime(Math.floor(value / 100), value % 100);
+  }
+
+  // Beberapa workbook menyimpan tanggal dan jam dalam satu serial Excel.
+  if (!Number.isInteger(value)) {
+    return parseNumericImportTime(value - Math.floor(value));
+  }
+
+  return { valid: false, value: null };
+}
+
 /**
  * Excel menyimpan jam yang diketik pengguna sebagai pecahan satu hari
  * (misalnya 08:00 menjadi 0.333333...). Template bawaan memakai teks, sehingga
- * kedua bentuk harus diterima agar baris tambahan tidak gagal di kolom VARCHAR(10).
+ * Format jam yang lazim diketik pengguna (08:00, 08.00, 800, dan 8) juga
+ * diterima agar perubahan langsung di workbook tidak membuat import gagal.
  */
 export function parseImportTime(value: unknown): ImportTimeResult {
   if (value === null || value === undefined || String(value).trim() === '') {
@@ -65,15 +103,7 @@ export function parseImportTime(value: unknown): ImportTimeResult {
   }
 
   if (typeof value === 'number') {
-    if (!Number.isFinite(value) || value < 0 || value >= 1) return { valid: false, value: null };
-
-    const totalMinutes = Math.round(value * 24 * 60) % (24 * 60);
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    return {
-      valid: true,
-      value: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`,
-    };
+    return parseNumericImportTime(value);
   }
 
   if (value instanceof Date && !isNaN(value.getTime())) {
@@ -83,18 +113,16 @@ export function parseImportTime(value: unknown): ImportTimeResult {
     };
   }
 
-  const text = String(value).trim();
-  const match = text.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
-  if (!match) return { valid: false, value: null };
+  const text = String(value).trim().replace(/\s*(?:WIB|WITA|WIT)\s*$/i, '');
+  const separated = text.match(/^(\d{1,2})[.:](\d{2})(?::\d{2})?$/);
+  if (separated) return formatImportTime(Number(separated[1]), Number(separated[2]));
 
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  if (hours > 23 || minutes > 59) return { valid: false, value: null };
+  // Angka yang oleh Excel tersimpan sebagai teks tetap diproses seperti angka.
+  if (/^\d+(?:[.,]\d+)?$/.test(text)) {
+    return parseNumericImportTime(Number(text.replace(',', '.')));
+  }
 
-  return {
-    valid: true,
-    value: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`,
-  };
+  return { valid: false, value: null };
 }
 
 /**
