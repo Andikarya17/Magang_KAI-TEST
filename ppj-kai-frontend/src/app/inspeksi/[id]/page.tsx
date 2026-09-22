@@ -37,7 +37,7 @@ interface ApiErrorResponse {
 }
 
 interface TrainAlert { id: number; trainCode: string; trainName: string; origin: string; destination: string; departureTime: string; arrivalTime: string }
-interface NearbyWarning { startPointName: string; endPointName: string; id: number; distanceMeters: number; creator: { nama: string; nipp: string } }
+interface NearbyWarning { startPointName: string; endPointName: string; trainDirectionName?: string; id: number; distanceMeters: number; creator: { nama: string; nipp: string } }
 
 // GPS Hook with improved accuracy and reliability
 function useGPS() {
@@ -235,7 +235,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
         seenNearbyWarnings.current.add(warning.id);
         setNearbyWarning(warning);
         playNotification('beep');
-        speakAnnouncement(`Peringatan dari PPJ ${warning.creator.nama}. Ada kereta yang akan lewat pada jalur ${warning.startPointName} ke ${warning.endPointName}.`);
+        speakAnnouncement(`Warning dari ${warning.creator.nama}. Ada kereta akan lewat dari arah ${warning.trainDirectionName || warning.endPointName}.`);
       } catch { /* polling akan mencoba lagi */ }
     };
     void checkNearbyWarnings();
@@ -647,7 +647,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
           {nearbyWarning && (
             <div className="w-full max-w-xl bg-blue-50 border-2 border-blue-400 rounded-xl shadow-xl p-3 flex items-center gap-3">
               <div className="w-11 h-11 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0"><span className="material-symbols-outlined">campaign</span></div>
-              <div className="flex-1 min-w-0"><p className="font-bold text-blue-900">Warning dari {nearbyWarning.creator.nama}</p><p className="text-xs text-blue-800">Kereta akan lewat di jalur {nearbyWarning.startPointName} ke {nearbyWarning.endPointName} · jarak PPJ sekitar {nearbyWarning.distanceMeters} meter</p></div>
+              <div className="flex-1 min-w-0"><p className="font-bold text-blue-900">Warning dari {nearbyWarning.creator.nama}</p><p className="text-xs text-blue-800">Ada kereta akan lewat dari arah {nearbyWarning.trainDirectionName || nearbyWarning.endPointName}</p></div>
               <button onClick={() => setNearbyWarning(null)} className="text-blue-700"><span className="material-symbols-outlined">close</span></button>
             </div>
           )}
@@ -851,7 +851,7 @@ export default function TrackingPage({ params }: { params: { id: string } }) {
               <button onClick={handleSendNearbyWarning} disabled={sendingWarning || !gpsPos} className="w-16 h-16 bg-blue-600 text-white rounded-full shadow-[0px_8px_24px_rgba(37,99,235,0.35)] flex items-center justify-center hover:scale-105 transition-transform active:scale-95 disabled:opacity-50" title="Peringatkan PPJ terdekat di masing-masing arah pada jalur yang sama">
                 <span className="material-symbols-outlined text-[32px]" style={{ fontVariationSettings: "'FILL' 1" }}>{sendingWarning ? 'hourglass_empty' : 'campaign'}</span>
               </button>
-              <p className="mt-1 bg-white/90 rounded-full px-2 py-0.5 text-[9px] font-bold text-blue-700 text-center shadow">WARNING PPJ</p>
+              <p className="mt-1 bg-white/90 rounded-full px-2 py-0.5 text-[9px] font-bold text-blue-700 text-center shadow">ALERT KERETA</p>
             </div>
 
             {/* Emergency FAB */}

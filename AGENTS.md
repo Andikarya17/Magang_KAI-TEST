@@ -283,6 +283,7 @@ warning_alerts (WarningAlert)
 - PPJ hanya dapat mengunduh PDF setelah approval; admin/KUPT/QC tetap dapat membuka draft untuk review.
 - PDF mencantumkan status tracking `APPROVED`/`NOT APPROVED` dan status keselamatan `AMAN`/`TIDAK AMAN`.
 - Saat tracking aktif, PPJ menerima alert suara jadwal kereta dan dapat mengirim warning suara ke PPJ lain terdekat di masing-masing sisi pada pasangan stasiun tugas aktif yang sama (termasuk arah terbalik), tanpa batas radius, dengan GPS maksimal 2 menit terakhir. Warning menyimpan nama stasiun awal–akhir saat dikirim dan mencantumkannya dalam teks serta suara. Deployment membutuhkan migrasi `20260910120000_add_warning_route`; warning lama tanpa informasi jalur tidak ditampilkan.
+- Arah kereta pada warning PPJ selalu berasal dari titik akhir tugas PPJ pengirim (`endPointName`), karena arah perjalanan inspeksi PPJ berlawanan dengan arah kereta. API warning mengirimkannya sebagai `trainDirectionName` untuk dipakai pada teks dan suara notifikasi.
 
 ### 6. Overpass API + Dijkstra (`lib/railway.ts`)
 - Request `way[railway]` dari Overpass API dalam area bounding box.

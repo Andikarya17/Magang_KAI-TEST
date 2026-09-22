@@ -345,6 +345,9 @@ export const getNearbyWarnings = async (req: Request, res: Response) => {
       .filter(warning => isSameWarningRoute(warning, activeTracking.tugas))
       .map(warning => ({
         ...warning,
+        // PPJ berjalan berlawanan dengan arah kereta. Karena itu arah datang
+        // kereta selalu memakai tujuan akhir tugas milik PPJ pengirim warning.
+        trainDirectionName: warning.endPointName,
         distanceMeters: Math.round(haversineMeters(latitude, longitude, warning.latitude, warning.longitude)),
       }))
       .slice(0, 50);

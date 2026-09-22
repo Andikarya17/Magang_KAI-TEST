@@ -16,7 +16,7 @@ function stub(target: any, method: string, implementation: any) {
 }
 afterEach(() => { restores.splice(0).reverse().forEach(restore => restore()); });
 
-test('nearby warnings require the same station pair, allow reverse direction, and have no radius limit', async () => {
+test('nearby warnings use the sender final destination as the train direction', async () => {
   stub(prisma.tracking, 'findFirst', async (args: any) => {
     assert.equal(args.where.tugasId, 12);
     assert.equal(args.where.tugas.assignedTo, 7);
@@ -39,6 +39,8 @@ test('nearby warnings require the same station pair, allow reverse direction, an
   await getNearbyWarnings(request(), res);
   assert.deepEqual(res.body.data.map((item: any) => item.id), [1, 2, 5]);
   assert.equal(res.body.data[0].startPointName, route.startPointName);
+  assert.equal(res.body.data[0].trainDirectionName, route.endPointName);
+  assert.equal(res.body.data[1].trainDirectionName, 'Stasiun Yogyakarta');
 });
 
 test('PPJ without active tracking receives no warning', async () => {
