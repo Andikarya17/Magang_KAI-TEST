@@ -699,24 +699,58 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// DELETE /admin/users/:id — deactivate or delete user
+// DELETE /admin/users/:id — permanent deletion with dependent data in one transaction
 export const deleteUser = async (req: AuthRequest, res: Response) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ success: false, message: 'Hanya admin yang boleh menghapus akun' });
+  }
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    return res.status(400).json({ success: false, message: 'ID akun tidak valid' });
+  }
+  // Older frontends used DELETE to deactivate. Never interpret those requests as permanent deletion.
+  if (req.body?.confirmPermanent !== true) {
+    return res.status(400).json({ success: false, message: 'Konfirmasi hapus permanen diperlukan. Muat ulang aplikasi; gunakan ubah status untuk menonaktifkan akun.' });
+  }
   try {
-    const { id } = req.params;
+    const result = await prisma.$transaction(async tx => {
+      const user = await tx.user.findUnique({ where: { id } });
+      if (!user) return { status: 404, message: 'User tidak ditemukan' };
+      if (user.role === 'admin' || id === req.user!.id) {
+        return { status: 403, message: 'Tidak boleh menghapus akun admin atau akun sendiri' };
+      }
+      const activeTask = await tx.tugasPpj.findFirst({
+        where: { assignedTo: id, OR: [{ status: 'in_progress' }, { tracking: { some: { status: 'started' } } }] },
+        select: { id: true },
+      });
+      if (activeTask) return { status: 409, message: 'Akun masih menjalankan inspeksi. Selesaikan inspeksi sebelum menghapus akun.' };
 
-    const user = await prisma.user.findUnique({ where: { id: parseInt(id) } });
-    if (!user) return res.status(404).json({ success: false, message: 'User tidak ditemukan' });
-    if (user.role === 'admin') return res.status(403).json({ success: false, message: 'Tidak boleh menghapus akun admin' });
-
-    // Soft delete — set isActive = false
-    await prisma.user.update({
-      where: { id: parseInt(id) },
-      data: { isActive: false },
-    });
-
-    return res.json({ success: true, message: 'Akun berhasil dinonaktifkan' });
+      const trackings = await tx.tracking.findMany({ where: { tugas: { assignedTo: id } }, select: { id: true } });
+      const trackingIds = trackings.map(tracking => tracking.id);
+      // Recipient IDs and template assignees have no FK; clear them explicitly.
+      await tx.warningAlert.updateMany({ where: { recipientOneTrackingId: { in: trackingIds } }, data: { recipientOneTrackingId: null } });
+      await tx.warningAlert.updateMany({ where: { recipientTwoTrackingId: { in: trackingIds } }, data: { recipientTwoTrackingId: null } });
+      await tx.laporan.deleteMany({ where: { trackingId: { in: trackingIds } } });
+      await tx.tracking.deleteMany({ where: { tugas: { assignedTo: id } } });
+      await tx.tugasPpj.deleteMany({ where: { assignedTo: id } });
+      await tx.templateItem.deleteMany({ where: { OR: [{ assignedTo: id }, { template: { createdBy: id } }] } });
+      await tx.templatePenugasan.deleteMany({ where: { createdBy: id } });
+      await tx.userWilayah.deleteMany({ where: { userId: id } });
+      await tx.warningAlert.deleteMany({ where: { createdBy: id } });
+      await tx.mapLocation.deleteMany({ where: { createdBy: id } });
+      await tx.trainSchedule.deleteMany({ where: { createdBy: id } });
+      await tx.tracking.updateMany({ where: { approvedBy: id }, data: { approvedBy: null } });
+      await tx.user.updateMany({ where: { managerId: id }, data: { managerId: null } });
+      await tx.user.delete({ where: { id } });
+      return { status: 200, message: 'Akun berhasil dihapus permanen' };
+    }, { isolationLevel: 'Serializable' });
+    return res.status(result.status).json({ success: result.status === 200, message: result.message });
   } catch (error) {
     console.error('Delete user error:', error);
+    const code = (error as { code?: string }).code;
+    if (code === 'P2034' || code === 'P2003') {
+      return res.status(409).json({ success: false, message: 'Data akun sedang digunakan atau berubah. Muat ulang dan coba lagi.' });
+    }
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };

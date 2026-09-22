@@ -2,6 +2,8 @@
 
 Frontend Next.js 14 untuk dashboard admin/KUPT, monitoring QC dan guest, serta inspeksi PPJ. Fitur, API, database, dan deployment lengkap tersedia di [README utama](../README.md).
 
+Sidebar admin berisi Tugas, Live, Map, Akun, dan Setting. Tab Jadwal Kereta beserta formnya sudah dihapus. Menu Akun memisahkan aksi aktifkan/nonaktifkan (`PATCH`) dari Hapus Permanen (`DELETE`), dengan konfirmasi dampak penghapusan dan notifikasi hasil. Tombol warning kereta pada PPJ tetap tersedia.
+
 ## Menjalankan
 
 Buat `.env.local` di direktori ini:

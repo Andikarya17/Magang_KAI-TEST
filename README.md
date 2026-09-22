@@ -8,13 +8,23 @@ Dokumentasi ini mengikuti [route aktif](ppj-kai-backend/src/routes), [schema dat
 
 | Pengguna | Halaman | Kemampuan utama |
 | --- | --- | --- |
-| Admin | `/admin` | Kelola petugas, tugas manual/Excel, akun, kategori, titik MAP, jadwal kereta; pantau perjalanan, laporan, dan approve tracking |
+| Admin | `/admin` | Kelola petugas, tugas manual/Excel, akun, kategori, titik MAP; pantau perjalanan, laporan, dan approve tracking |
 | KUPT | `/admin` | Kelola petugas, tugas/import dengan batas wilayah, kategori, serta monitoring |
 | QC | `/qc` | Monitoring tugas, posisi, dan laporan menurut wilayah JR |
 | PPJ | `/inspeksi` | Tugas/riwayat, GPS tracking, laporan/foto, alert jadwal, warning PPJ, PDF setelah approval |
 | Pengunjung | `/guest` | Peta monitoring publik tanpa login |
 
 Role `guest` juga ada pada model pengguna, tetapi halaman guest dan endpoint petanya bersifat publik. Approval, manajemen akun, jadwal kereta, dan titik MAP dibatasi khusus admin oleh router backend. Tugas admin/KUPT dibatasi melalui `managerId` petugas; QC menggunakan `UserWilayah`.
+
+### Kelola akun
+
+Menu Akun admin menyediakan tambah, edit, aktifkan/nonaktifkan, dan **Hapus Permanen** sebagai aksi terpisah. Nonaktifkan mempertahankan data dan dapat dibatalkan dengan mengaktifkan akun kembali.
+
+Hapus Permanen menampilkan konfirmasi nama/NIPP serta dampak penghapusan. Akun beserta penugasan, tracking, laporan/foto, warning, wilayah, template, dan data miliknya dihapus dalam satu transaksi. Petugas yang dikelola akun tersebut dilepas (`managerId = null`), bukan ikut dihapus. Referensi approval dan penerima warning dibersihkan. Penghapusan ditolak untuk akun admin, akun sendiri, atau akun dengan inspeksi aktif. Penghapusan permanen tidak dapat dibatalkan melalui aplikasi.
+
+Token akun yang dihapus atau dinonaktifkan ditolak pada request terproteksi berikutnya. Daftar akun dan data dashboard diperbarui setelah aksi berhasil, disertai notifikasi hasil.
+
+Sidebar admin: **Tugas, Live, Map, Akun, Setting**. Tab **Jadwal Kereta**, tabel, dan form CRUD-nya sudah dihapus karena tidak digunakan lagi. API/database jadwal lama tetap tersedia; tombol warning PPJ tetap digunakan.
 
 ### Penugasan dan inspeksi
 
@@ -48,7 +58,7 @@ Kategori temuan diambil dari database, dapat ditambah, diubah, dinonaktifkan, da
 
 Dua sumber notifikasi memiliki alur berbeda:
 
-1. **Jadwal kereta:** admin mengelola jadwal harian. Backend memilih jadwal aktif dalam rentang berangkat–tiba WIB, termasuk perjalanan melewati tengah malam. PPJ memeriksa setiap 30 detik saat tracking aktif. Ini memakai jadwal tersimpan, bukan posisi kereta langsung; endpoint saat ini belum memfilter jadwal menurut rute PPJ.
+1. **Jadwal kereta (legacy):** tab pengelolaan jadwal di admin sudah dihapus. API dan data jadwal tetap tersedia; polling PPJ setiap 30 detik masih berjalan saat tracking aktif sehingga jadwal aktif yang sudah tersimpan masih dapat memicu alert. Backend memilih rentang berangkat–tiba WIB, termasuk perjalanan melewati tengah malam. Ini bukan posisi kereta langsung dan belum difilter menurut rute PPJ.
 2. **Warning PPJ:** tombol ALERT KERETA mengirim warning ke maksimal dua sesi PPJ terdekat, satu pada setiap sisi proyeksi jalur. Pengirim/penerima harus tracking aktif pada pasangan stasiun yang sama (termasuk arah terbalik), GPS penerima maksimal dua menit terakhir. Tidak ada batas radius jarak. Cooldown pengiriman 30 detik, masa berlaku dua menit, polling penerima setiap 10 detik.
 
 Warning menyimpan snapshot stasiun tugas pengirim. Arah datang kereta berasal dari **tujuan akhir PPJ pengirim**, melalui `trainDirectionName` dengan fallback frontend `endPointName`. Untuk Rusniawan bertugas Yogyakarta → Lempuyangan, teks dan suara:
@@ -216,7 +226,7 @@ Mode bypass **tidak terbatas localhost** dan tersedia bila flag tidak diisi. UI 
 
 ## API aktif
 
-Base path `/api`. Endpoint terproteksi memakai `Authorization: Bearer <token>`. JWT berisi id/role dengan masa berlaku satu hari. Tabel menunjukkan middleware; controller dapat menambahkan pembatasan kepemilikan/wilayah. Respons umumnya `{ success, data, message }`; PDF/template berupa file.
+Base path `/api`. Endpoint terproteksi memakai `Authorization: Bearer <token>`. JWT berisi id/role dengan masa berlaku satu hari. Middleware memeriksa keberadaan/status aktif akun dan memakai role terbaru dari database pada setiap request. Tabel menunjukkan middleware; controller dapat menambahkan pembatasan kepemilikan/wilayah. Respons umumnya `{ success, data, message }`; PDF/template berupa file.
 
 ### Publik dan profil
 
@@ -260,7 +270,8 @@ Base path `/api`. Endpoint terproteksi memakai `Authorization: Bearer <token>`. 
 | PATCH | `/admin/kategori-temuan/reorder`, `/admin/kategori-temuan/:id` | Admin, KUPT |
 | DELETE | `/admin/kategori-temuan/:id` | Admin, KUPT |
 | GET, POST | `/admin/users` | Admin |
-| PATCH, DELETE | `/admin/users/:id` | Admin; DELETE menonaktifkan akun |
+| PATCH | `/admin/users/:id` | Admin; edit atau aktifkan/nonaktifkan lewat `isActive` |
+| DELETE | `/admin/users/:id` | Admin; body `{ "confirmPermanent": true }`; hapus permanen akun dan data terkait; 409 jika inspeksi masih aktif |
 | GET | `/admin/wilayah` | Admin |
 | GET, POST | `/admin/train-schedules` | Admin |
 | PATCH, DELETE | `/admin/train-schedules/:id` | Admin |

@@ -34,7 +34,6 @@ interface RegisteredMapLocation { id: number; name: string; address: string | nu
 interface Stats { totalPetugas: number; tugasAktif: number; tugasSelesai: number; laporanDarurat: number }
 interface ManagedUser { id: number; nipp: string; nama: string; role: string; isActive: boolean; jabatan?: string; division?: string; workArea?: string; phone?: string; managerId?: number; createdAt: string; wilayahAssignments: { id: number; wilayah: { id: number; kode: string; nama: string; stations: string } }[] }
 interface WilayahItem { id: number; kode: string; nama: string; stations: string }
-interface TrainSchedule { id: number; trainCode: string; trainName: string; origin: string; destination: string; departureTime: string; arrivalTime: string; isActive: boolean }
 
 interface KategoriTemuan { id: number; key: string; label: string; icon: string; color: string; isActive: boolean; sortOrder: number }
 
@@ -91,7 +90,7 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<'map' | 'tasks' | 'emergency'>('map');
 
   // Sidebar menu state
-  const [activeMenu, setActiveMenu] = useState<'penugasan' | 'liveview' | 'locationmap' | 'trainSchedules' | 'akun' | 'settings'>('penugasan');
+  const [activeMenu, setActiveMenu] = useState<'penugasan' | 'liveview' | 'locationmap' | 'akun' | 'settings'>('penugasan');
 
   // Role-derived permissions
   const userRole = user?.role || 'admin';
@@ -111,6 +110,7 @@ export default function AdminPage() {
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
   const [userForm, setUserForm] = useState({ nipp: '', nama: '', password: '', role: 'ppj' as string, wilayahIds: [] as number[] });
   const [savingUser, setSavingUser] = useState(false);
+  const [busyUserId, setBusyUserId] = useState<number | null>(null);
   const [userSearchQuery, setUserSearchQuery] = useState('');
 
   // Task list filter state
@@ -121,13 +121,6 @@ export default function AdminPage() {
   const [selectedTugasDetail, setSelectedTugasDetail] = useState<Tugas | null>(null);
   const [downloadingTugasId, setDownloadingTugasId] = useState<number | null>(null);
   const [approvingTrackingId, setApprovingTrackingId] = useState<number | null>(null);
-
-  // Train schedule CRUD state
-  const [trainSchedules, setTrainSchedules] = useState<TrainSchedule[]>([]);
-  const [showTrainScheduleModal, setShowTrainScheduleModal] = useState(false);
-  const [editingTrainSchedule, setEditingTrainSchedule] = useState<TrainSchedule | null>(null);
-  const [trainScheduleForm, setTrainScheduleForm] = useState({ trainCode: '', trainName: '', origin: '', destination: '', departureTime: '', arrivalTime: '', isActive: true });
-  const [savingTrainSchedule, setSavingTrainSchedule] = useState(false);
 
   // Task form state
   const [form, setForm] = useState({ jalur: '', tanggal: '', assignedTo: '', startPointName: '', endPointName: '', startPointLat: '', startPointLong: '', endPointLat: '', endPointLong: '', startMapLocationId: '', endMapLocationId: '', jamMulai: '', jamSelesai: '' });
@@ -316,13 +309,6 @@ export default function AdminPage() {
     } catch (e) { console.error(e); }
   }, []);
 
-  const fetchTrainSchedules = useCallback(async () => {
-    try {
-      const res = await api.get('/admin/train-schedules');
-      setTrainSchedules(Array.isArray(res.data.data) ? res.data.data : []);
-    } catch (e) { console.error(e); }
-  }, []);
-
   // Persist a reordered list (drag & drop). Optimistic update with rollback on failure.
   const persistKategoriOrder = useCallback(async (ordered: KategoriTemuan[]) => {
     const previous = kategoriList;
@@ -436,16 +422,29 @@ export default function AdminPage() {
     finally { setSavingUser(false); }
   };
   const handleToggleUserActive = async (u: ManagedUser) => {
+    if (busyUserId !== null) return;
     const action = u.isActive ? 'Nonaktifkan' : 'Aktifkan';
     if (!(await showConfirm(`${action} akun ${u.nama}?`))) return;
     try {
-      if (u.isActive) {
-        await api.delete(`/admin/users/${u.id}`);
-      } else {
-        await api.patch(`/admin/users/${u.id}`, { isActive: true });
-      }
-      fetchUsers();
-    } catch (e: unknown) { showToast(getApiErrorMessage(e, 'Gagal.'), 'error'); }
+      setBusyUserId(u.id);
+      await api.patch(`/admin/users/${u.id}`, { isActive: !u.isActive });
+      showToast(`Akun berhasil ${u.isActive ? 'dinonaktifkan' : 'diaktifkan'}.`, 'success');
+      await Promise.all([fetchUsers(), fetchAll()]);
+    } catch (e: unknown) { showToast(getApiErrorMessage(e, 'Gagal mengubah status akun.'), 'error'); }
+    finally { setBusyUserId(null); }
+  };
+
+  const handleDeleteUser = async (u: ManagedUser) => {
+    if (busyUserId !== null) return;
+    if (!(await showConfirm(`Hapus permanen akun ${u.nama} (${u.nipp})? Seluruh penugasan, riwayat inspeksi, laporan, foto, warning, dan data milik akun ini ikut terhapus. Petugas yang dikelolanya akan dilepas dari pengelolaan. Tindakan ini tidak dapat dibatalkan.`))) return;
+    try {
+      setBusyUserId(u.id);
+      await api.delete(`/admin/users/${u.id}`, { data: { confirmPermanent: true } });
+      setManagedUsers(current => current.filter(item => item.id !== u.id));
+      showToast('Akun berhasil dihapus permanen.', 'success');
+      await Promise.all([fetchUsers(), fetchAll()]);
+    } catch (e: unknown) { showToast(getApiErrorMessage(e, 'Gagal menghapus akun.'), 'error'); }
+    finally { setBusyUserId(null); }
   };
 
   const fetchTaskMapLocations = async () => {
@@ -712,60 +711,6 @@ export default function AdminPage() {
     }
   };
 
-  const openCreateTrainSchedule = () => {
-    setEditingTrainSchedule(null);
-    setTrainScheduleForm({ trainCode: '', trainName: '', origin: '', destination: '', departureTime: '', arrivalTime: '', isActive: true });
-    setShowTrainScheduleModal(true);
-  };
-
-  const openEditTrainSchedule = (schedule: TrainSchedule) => {
-    setEditingTrainSchedule(schedule);
-    setTrainScheduleForm({
-      trainCode: schedule.trainCode,
-      trainName: schedule.trainName,
-      origin: schedule.origin,
-      destination: schedule.destination,
-      departureTime: schedule.departureTime,
-      arrivalTime: schedule.arrivalTime,
-      isActive: schedule.isActive,
-    });
-    setShowTrainScheduleModal(true);
-  };
-
-  const handleSaveTrainSchedule = async () => {
-    const { trainCode, trainName, origin, destination, departureTime, arrivalTime } = trainScheduleForm;
-    if (!trainCode || !trainName || !origin || !destination || !departureTime || !arrivalTime) {
-      showToast('Lengkapi seluruh data jadwal kereta.', 'warning');
-      return;
-    }
-    try {
-      setSavingTrainSchedule(true);
-      if (editingTrainSchedule) {
-        await api.patch(`/admin/train-schedules/${editingTrainSchedule.id}`, trainScheduleForm);
-      } else {
-        await api.post('/admin/train-schedules', trainScheduleForm);
-      }
-      setShowTrainScheduleModal(false);
-      showToast(editingTrainSchedule ? 'Jadwal kereta diperbarui.' : 'Jadwal kereta ditambahkan.', 'success');
-      await fetchTrainSchedules();
-    } catch (e: unknown) {
-      showToast(getApiErrorMessage(e, 'Gagal menyimpan jadwal kereta.'), 'error');
-    } finally {
-      setSavingTrainSchedule(false);
-    }
-  };
-
-  const handleDeleteTrainSchedule = async (schedule: TrainSchedule) => {
-    if (!(await showConfirm(`Hapus jadwal ${schedule.trainCode} - ${schedule.trainName}?`))) return;
-    try {
-      await api.delete(`/admin/train-schedules/${schedule.id}`);
-      showToast('Jadwal kereta dihapus.', 'success');
-      await fetchTrainSchedules();
-    } catch (e: unknown) {
-      showToast(getApiErrorMessage(e, 'Gagal menghapus jadwal kereta.'), 'error');
-    }
-  };
-
   const mapEmergencies = emergencies.map(e => ({ id: e.id, latitude: e.latitude, longitude: e.longitude, jenisTemuan: e.jenisTemuan, deskripsi: e.deskripsi, foto: e.foto, createdAt: e.createdAt, petugasNama: e.tracking?.tugas?.user?.nama, jalur: e.tracking?.tugas?.jalur }));
   const mapTasks = tugas
     .filter(t => t.status === 'in_progress')
@@ -903,20 +848,6 @@ export default function AdminPage() {
             >
               <span className="material-symbols-outlined text-[20px] md:text-[22px]">add_location_alt</span>
               <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Map</span>
-            </button>
-          )}
-          {isAdmin && (
-            <button
-              onClick={() => { setActiveMenu('trainSchedules'); fetchTrainSchedules(); }}
-              className={`w-16 h-12 md:w-14 md:h-14 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
-                activeMenu === 'trainSchedules'
-                  ? 'bg-primary text-white shadow-lg shadow-primary/25'
-                  : 'bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-              }`}
-              title="Jadwal Kereta"
-            >
-              <span className="material-symbols-outlined text-[20px] md:text-[22px]">train</span>
-              <span className="text-[9px] font-bold uppercase tracking-wider leading-none">Kereta</span>
             </button>
           )}
           {isAdmin && (
@@ -1317,45 +1248,6 @@ export default function AdminPage() {
           </main>
         )}
 
-        {/* ── TRAIN SCHEDULE CRUD (Admin Only) ─────────────── */}
-        {activeMenu === 'trainSchedules' && isAdmin && (
-          <main className="flex-1 overflow-y-auto p-3 md:p-4">
-            <div className="max-w-6xl mx-auto bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-5 md:p-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-xl font-extrabold text-slate-800 flex items-center gap-2"><span className="material-symbols-outlined text-primary">train</span>Jadwal Kereta</h2>
-                  <p className="text-sm text-slate-500 mt-1">Jadwal aktif memicu alert pada PPJ selama perjalanan kereta berlangsung.</p>
-                </div>
-                <button onClick={openCreateTrainSchedule} className="px-4 py-2.5 bg-primary text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 hover:bg-primary/90 shadow-sm">
-                  <span className="material-symbols-outlined text-[19px]">add</span> Tambah Jadwal
-                </button>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left min-w-[760px]">
-                  <thead className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase tracking-widest text-slate-500">
-                    <tr><th className="px-5 py-3">Kereta</th><th className="px-5 py-3">Rute</th><th className="px-5 py-3">Berangkat</th><th className="px-5 py-3">Tiba</th><th className="px-5 py-3">Status</th><th className="px-5 py-3 text-right">Aksi</th></tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {trainSchedules.map(schedule => (
-                      <tr key={schedule.id} className="hover:bg-slate-50/80">
-                        <td className="px-5 py-4"><p className="font-extrabold text-slate-800">{schedule.trainCode}</p><p className="text-xs text-slate-500 mt-0.5">{schedule.trainName}</p></td>
-                        <td className="px-5 py-4"><p className="text-sm font-semibold text-slate-700">{schedule.origin}</p><p className="text-xs text-slate-500 flex items-center gap-1"><span className="material-symbols-outlined text-[13px]">arrow_forward</span>{schedule.destination}</p></td>
-                        <td className="px-5 py-4 font-mono font-bold text-slate-700">{schedule.departureTime}</td>
-                        <td className="px-5 py-4 font-mono font-bold text-slate-700">{schedule.arrivalTime}</td>
-                        <td className="px-5 py-4"><span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${schedule.isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{schedule.isActive ? 'Aktif' : 'Nonaktif'}</span></td>
-                        <td className="px-5 py-4"><div className="flex justify-end gap-2"><button onClick={() => openEditTrainSchedule(schedule)} className="p-2 rounded-lg text-blue-600 hover:bg-blue-50" title="Edit"><span className="material-symbols-outlined text-[19px]">edit</span></button><button onClick={() => handleDeleteTrainSchedule(schedule)} className="p-2 rounded-lg text-rose-600 hover:bg-rose-50" title="Hapus"><span className="material-symbols-outlined text-[19px]">delete</span></button></div></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {trainSchedules.length === 0 && (
-                  <div className="py-20 text-center"><span className="material-symbols-outlined text-slate-200 text-6xl">train</span><p className="text-slate-500 font-semibold mt-3">Belum ada jadwal kereta.</p></div>
-                )}
-              </div>
-            </div>
-          </main>
-        )}
-
         {/* ── AKUN MANAGEMENT VIEW (Admin Only) ────────────── */}
         {activeMenu === 'akun' && isAdmin && (
           <div className="flex flex-col lg:flex-row flex-1 overflow-y-auto lg:overflow-hidden p-3 md:p-4 gap-4">
@@ -1432,11 +1324,14 @@ export default function AdminPage() {
                               {u.isActive ? 'Aktif' : 'Nonaktif'}
                             </span>
                             <span className="flex-1"></span>
-                            <button onClick={() => handleOpenEditUser(u)} className="text-slate-400 hover:text-primary transition-colors p-1 rounded hover:bg-primary/5">
+                            <button title="Edit akun" aria-label={`Edit akun ${u.nama}`} disabled={busyUserId !== null} onClick={() => handleOpenEditUser(u)} className="text-slate-400 hover:text-primary transition-colors p-1 rounded hover:bg-primary/5">
                               <span className="material-symbols-outlined text-[18px]">edit</span>
                             </button>
-                            <button onClick={() => handleToggleUserActive(u)} className={`transition-colors p-1 rounded ${u.isActive ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'}`}>
+                            <button title={u.isActive ? 'Nonaktifkan akun' : 'Aktifkan akun'} aria-label={`${u.isActive ? 'Nonaktifkan' : 'Aktifkan'} akun ${u.nama}`} disabled={busyUserId !== null} onClick={() => handleToggleUserActive(u)} className={`transition-colors p-1 rounded ${u.isActive ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'}`}>
                               <span className="material-symbols-outlined text-[18px]">{u.isActive ? 'person_off' : 'person'}</span>
+                            </button>
+                            <button title="Hapus permanen" aria-label={`Hapus permanen akun ${u.nama}`} disabled={busyUserId !== null} onClick={() => handleDeleteUser(u)} className="text-rose-600 hover:bg-rose-50 transition-colors p-1 rounded disabled:opacity-50">
+                              <span className="material-symbols-outlined text-[18px]">delete_forever</span>
                             </button>
                           </div>
                         </div>
@@ -2133,34 +2028,6 @@ export default function AdminPage() {
                 )}
               </div>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Train Schedule Modal ─────────────────────────── */}
-      {showTrainScheduleModal && (
-        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
-            <div className="bg-slate-800 px-6 py-4 flex items-center justify-between">
-              <h3 className="font-bold text-white flex items-center gap-2"><span className="material-symbols-outlined text-blue-300">train</span>{editingTrainSchedule ? 'Edit Jadwal Kereta' : 'Tambah Jadwal Kereta'}</h3>
-              <button onClick={() => setShowTrainScheduleModal(false)} className="text-slate-400 hover:text-white"><span className="material-symbols-outlined">close</span></button>
-            </div>
-            <div className="p-6 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Kode Kereta</label><input value={trainScheduleForm.trainCode} onChange={e => setTrainScheduleForm(f => ({ ...f, trainCode: e.target.value.toUpperCase() }))} placeholder="KA 101" className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary" /></div>
-                <div><label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Nama Kereta</label><input value={trainScheduleForm.trainName} onChange={e => setTrainScheduleForm(f => ({ ...f, trainName: e.target.value }))} placeholder="Argo Lawu" className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary" /></div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Rute Awal</label><input value={trainScheduleForm.origin} onChange={e => setTrainScheduleForm(f => ({ ...f, origin: e.target.value }))} placeholder="Yogyakarta" className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary" /></div>
-                <div><label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Destinasi Akhir</label><input value={trainScheduleForm.destination} onChange={e => setTrainScheduleForm(f => ({ ...f, destination: e.target.value }))} placeholder="Solo Balapan" className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary" /></div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Jam Berangkat</label><input type="time" value={trainScheduleForm.departureTime} onChange={e => setTrainScheduleForm(f => ({ ...f, departureTime: e.target.value }))} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary" /></div>
-                <div><label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Jam Tiba</label><input type="time" value={trainScheduleForm.arrivalTime} onChange={e => setTrainScheduleForm(f => ({ ...f, arrivalTime: e.target.value }))} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary" /></div>
-              </div>
-              <label className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer"><span className="text-sm font-semibold text-slate-700">Aktifkan alert jadwal ini</span><input type="checkbox" checked={trainScheduleForm.isActive} onChange={e => setTrainScheduleForm(f => ({ ...f, isActive: e.target.checked }))} className="w-5 h-5 accent-blue-600" /></label>
-            </div>
-            <div className="p-5 border-t border-slate-200 flex gap-3"><button onClick={() => setShowTrainScheduleModal(false)} className="flex-1 py-3 rounded-xl border border-slate-300 font-bold text-sm">Batal</button><button onClick={handleSaveTrainSchedule} disabled={savingTrainSchedule} className="flex-[2] py-3 rounded-xl bg-primary text-white font-bold text-sm disabled:opacity-50">{savingTrainSchedule ? 'Menyimpan...' : 'Simpan Jadwal'}</button></div>
           </div>
         </div>
       )}

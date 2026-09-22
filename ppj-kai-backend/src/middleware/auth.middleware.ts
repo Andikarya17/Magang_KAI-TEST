@@ -1,7 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyToken } from '../utils/jwt';
+import prisma from '../config/database';
 
-export const requireAuth = (req: Request, res: Response, next: NextFunction) => {
+export const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -15,8 +16,16 @@ export const requireAuth = (req: Request, res: Response, next: NextFunction) => 
     return res.status(401).json({ success: false, message: 'Invalid or expired token' });
   }
 
-  // Attach user to request
-  (req as any).user = decoded;
+  // A previously issued token must not keep a deleted/inactive account signed in.
+  try {
+    const user = await prisma.user.findUnique({ where: { id: decoded.id }, select: { id: true, role: true, isActive: true } });
+    if (!user || !user.isActive) {
+      return res.status(401).json({ success: false, message: 'Akun sudah dihapus atau dinonaktifkan' });
+    }
+    (req as any).user = { id: user.id, role: user.role };
+  } catch (error) {
+    return next(error);
+  }
   next();
 };
 
