@@ -346,7 +346,7 @@ warning_alerts (WarningAlert)
 
 1. **Admin (`admin`)**: Akses penuh ke seluruh wilayah, bisa tambah tugas, kelola PPJ, import/export template, CRUD kategori insiden.
 2. **QC (`qc`)**: Memonitor beberapa wilayah (contoh: QC Region A pegang JR 6.1 - 6.4). Bisa lihat tugas dan live tracking di wilayahnya.
-3. **KUPT (`kupt`)**: Memonitor satu wilayah spesifik (contoh: KUPT Jenar pegang JR 6.1). Bisa lihat tugas dan live tracking.
+3. **KUPT (`kupt`)**: Memonitor minimal dua wilayah yang ditetapkan Super Admin. Super Admin juga menentukan petugas PPJ yang dikelola KUPT melalui menu Kelola Akun. KUPT bisa melihat tugas dan live tracking petugas kelolaannya pada wilayah tersebut.
 4. **Petugas PPJ (`ppj`)**: Menerima tugas, start tracking, input laporan.
 5. **Guest (`guest`)**: Hanya bisa melihat GuestMap (Live View tanpa aksi manipulasi data).
 

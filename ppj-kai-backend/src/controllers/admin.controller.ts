@@ -11,6 +11,13 @@ interface AuthRequest extends Request {
   user?: { id: number; role: string };
 }
 
+function parseUniquePositiveIds(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  const ids = value.filter((item): item is number => typeof item === 'number' && Number.isSafeInteger(item) && item > 0);
+  if (ids.length !== value.length || new Set(ids).size !== ids.length) return null;
+  return ids;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER: Get station names for a user based on their wilayah assignments
 // ─────────────────────────────────────────────────────────────────────────────
@@ -567,7 +574,7 @@ export const getAllUsers = async (req: AuthRequest, res: Response) => {
 // POST /admin/users — create user baru (dengan role & wilayah)
 export const createUser = async (req: AuthRequest, res: Response) => {
   try {
-    const { nipp, nama, password, role, wilayahIds } = req.body;
+    const { nipp, nama, password, role, wilayahIds, petugasIds } = req.body;
 
     // Validate required fields
     if (!nipp || !nama || !password || !role) {
@@ -580,9 +587,33 @@ export const createUser = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ success: false, message: 'Role harus: qc, kupt, atau ppj' });
     }
 
-    // KUPT hanya boleh 1 wilayah
-    if (role === 'kupt' && wilayahIds && wilayahIds.length > 1) {
-      return res.status(400).json({ success: false, message: 'KUPT hanya boleh memiliki 1 wilayah' });
+    const selectedWilayahIds = parseUniquePositiveIds(wilayahIds);
+    if (role === 'kupt' && (!selectedWilayahIds || selectedWilayahIds.length < 2)) {
+      return res.status(400).json({ success: false, message: 'KUPT wajib memiliki minimal 2 wilayah' });
+    }
+    if (wilayahIds !== undefined && !selectedWilayahIds) {
+      return res.status(400).json({ success: false, message: 'Daftar wilayah tidak valid' });
+    }
+    if (selectedWilayahIds && selectedWilayahIds.length > 0) {
+      const validWilayahCount = await prisma.wilayah.count({ where: { id: { in: selectedWilayahIds } } });
+      if (validWilayahCount !== selectedWilayahIds.length) {
+        return res.status(400).json({ success: false, message: 'Salah satu wilayah yang dipilih tidak valid' });
+      }
+    }
+
+    const parsedPetugasIds = petugasIds === undefined ? [] : parseUniquePositiveIds(petugasIds);
+    const selectedPetugasIds = role === 'kupt' && parsedPetugasIds ? parsedPetugasIds : [];
+    if (!parsedPetugasIds) {
+      return res.status(400).json({ success: false, message: 'Daftar petugas tidak valid' });
+    }
+    if (role !== 'kupt' && parsedPetugasIds.length > 0) {
+      return res.status(400).json({ success: false, message: 'Petugas kelolaan hanya dapat dipilih untuk role KUPT' });
+    }
+    if (selectedPetugasIds.length > 0) {
+      const validPetugasCount = await prisma.user.count({ where: { id: { in: selectedPetugasIds }, role: 'ppj' } });
+      if (validPetugasCount !== selectedPetugasIds.length) {
+        return res.status(400).json({ success: false, message: 'Salah satu petugas yang dipilih tidak valid' });
+      }
     }
 
     // Check if NIPP already exists
@@ -593,25 +624,24 @@ export const createUser = async (req: AuthRequest, res: Response) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const user = await prisma.user.create({
-      data: {
-        nipp,
-        nama,
-        password: hashedPassword,
-        role,
-        isActive: true,
-      },
-    });
-
-    // Create wilayah assignments if provided (for QC/KUPT)
-    if (wilayahIds && Array.isArray(wilayahIds) && wilayahIds.length > 0) {
-      await prisma.userWilayah.createMany({
-        data: wilayahIds.map((wId: number) => ({
-          userId: user.id,
-          wilayahId: wId,
-        })),
+    const user = await prisma.$transaction(async tx => {
+      const created = await tx.user.create({
+        data: { nipp, nama, password: hashedPassword, role, isActive: true },
       });
-    }
+
+      if (selectedWilayahIds && selectedWilayahIds.length > 0) {
+        await tx.userWilayah.createMany({
+          data: selectedWilayahIds.map(wilayahId => ({ userId: created.id, wilayahId })),
+        });
+      }
+      if (selectedPetugasIds.length > 0) {
+        await tx.user.updateMany({
+          where: { id: { in: selectedPetugasIds }, role: 'ppj' },
+          data: { managerId: created.id },
+        });
+      }
+      return created;
+    });
 
     // Fetch created user with wilayah
     const createdUser = await prisma.user.findUnique({
@@ -633,7 +663,7 @@ export const createUser = async (req: AuthRequest, res: Response) => {
 export const updateUser = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const { nama, role, wilayahIds, isActive, password } = req.body;
+    const { nama, role, wilayahIds, petugasIds, isActive, password } = req.body;
 
     const user = await prisma.user.findUnique({ where: { id: parseInt(id) } });
     if (!user) return res.status(404).json({ success: false, message: 'User tidak ditemukan' });
@@ -647,10 +677,40 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // KUPT: max 1 wilayah
     const effectiveRole = role || user.role;
-    if (effectiveRole === 'kupt' && wilayahIds && wilayahIds.length > 1) {
-      return res.status(400).json({ success: false, message: 'KUPT hanya boleh memiliki 1 wilayah' });
+    const selectedWilayahIds = wilayahIds === undefined ? undefined : parseUniquePositiveIds(wilayahIds);
+    if (wilayahIds !== undefined && !selectedWilayahIds) {
+      return res.status(400).json({ success: false, message: 'Daftar wilayah tidak valid' });
+    }
+    if (effectiveRole === 'kupt' && (role !== undefined || wilayahIds !== undefined)) {
+      const effectiveWilayahCount = selectedWilayahIds
+        ? selectedWilayahIds.length
+        : await prisma.userWilayah.count({ where: { userId: user.id } });
+      if (effectiveWilayahCount < 2) {
+        return res.status(400).json({ success: false, message: 'KUPT wajib memiliki minimal 2 wilayah' });
+      }
+    }
+    if (selectedWilayahIds && selectedWilayahIds.length > 0) {
+      const validWilayahCount = await prisma.wilayah.count({ where: { id: { in: selectedWilayahIds } } });
+      if (validWilayahCount !== selectedWilayahIds.length) {
+        return res.status(400).json({ success: false, message: 'Salah satu wilayah yang dipilih tidak valid' });
+      }
+    }
+
+    const shouldSyncPetugas = petugasIds !== undefined || (user.role === 'kupt' && effectiveRole !== 'kupt');
+    const parsedPetugasIds = petugasIds === undefined ? [] : parseUniquePositiveIds(petugasIds);
+    const selectedPetugasIds = effectiveRole === 'kupt' && parsedPetugasIds ? parsedPetugasIds : [];
+    if (petugasIds !== undefined && !parsedPetugasIds) {
+      return res.status(400).json({ success: false, message: 'Daftar petugas tidak valid' });
+    }
+    if (effectiveRole !== 'kupt' && parsedPetugasIds && parsedPetugasIds.length > 0) {
+      return res.status(400).json({ success: false, message: 'Petugas kelolaan hanya dapat dipilih untuk role KUPT' });
+    }
+    if (selectedPetugasIds.length > 0) {
+      const validPetugasCount = await prisma.user.count({ where: { id: { in: selectedPetugasIds }, role: 'ppj' } });
+      if (validPetugasCount !== selectedPetugasIds.length) {
+        return res.status(400).json({ success: false, message: 'Salah satu petugas yang dipilih tidak valid' });
+      }
     }
 
     // Build update data
@@ -662,30 +722,33 @@ export const updateUser = async (req: AuthRequest, res: Response) => {
       updateData.password = await bcrypt.hash(password, 10);
     }
 
-    await prisma.user.update({
-      where: { id: parseInt(id) },
-      data: updateData,
-    });
+    const userId = parseInt(id);
+    await prisma.$transaction(async tx => {
+      await tx.user.update({ where: { id: userId }, data: updateData });
 
-    // Re-sync wilayah assignments if provided
-    if (wilayahIds !== undefined) {
-      // Delete existing assignments
-      await prisma.userWilayah.deleteMany({ where: { userId: parseInt(id) } });
-
-      // Create new assignments
-      if (Array.isArray(wilayahIds) && wilayahIds.length > 0) {
-        await prisma.userWilayah.createMany({
-          data: wilayahIds.map((wId: number) => ({
-            userId: parseInt(id),
-            wilayahId: wId,
-          })),
-        });
+      if (wilayahIds !== undefined) {
+        await tx.userWilayah.deleteMany({ where: { userId } });
+        if (selectedWilayahIds && selectedWilayahIds.length > 0) {
+          await tx.userWilayah.createMany({
+            data: selectedWilayahIds.map(wilayahId => ({ userId, wilayahId })),
+          });
+        }
       }
-    }
+
+      if (shouldSyncPetugas) {
+        await tx.user.updateMany({ where: { role: 'ppj', managerId: userId }, data: { managerId: null } });
+        if (selectedPetugasIds.length > 0) {
+          await tx.user.updateMany({
+            where: { id: { in: selectedPetugasIds }, role: 'ppj' },
+            data: { managerId: userId },
+          });
+        }
+      }
+    });
 
     // Fetch updated user with wilayah
     const updatedUser = await prisma.user.findUnique({
-      where: { id: parseInt(id) },
+      where: { id: userId },
       select: {
         id: true, nipp: true, nama: true, role: true, isActive: true,
         wilayahAssignments: { include: { wilayah: true } },

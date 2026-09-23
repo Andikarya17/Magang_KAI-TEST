@@ -108,7 +108,8 @@ export default function AdminPage() {
   const [allWilayah, setAllWilayah] = useState<WilayahItem[]>([]);
   const [showUserModal, setShowUserModal] = useState(false);
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
-  const [userForm, setUserForm] = useState({ nipp: '', nama: '', password: '', role: 'ppj' as string, wilayahIds: [] as number[] });
+  const [userForm, setUserForm] = useState({ nipp: '', nama: '', password: '', role: 'ppj' as string, wilayahIds: [] as number[], petugasIds: [] as number[] });
+  const [managedPetugasSearch, setManagedPetugasSearch] = useState('');
   const [savingUser, setSavingUser] = useState(false);
   const [busyUserId, setBusyUserId] = useState<number | null>(null);
   const [userSearchQuery, setUserSearchQuery] = useState('');
@@ -392,25 +393,31 @@ export default function AdminPage() {
   // Account management handlers (admin only)
   const handleOpenCreateUser = () => {
     setEditingUser(null);
-    setUserForm({ nipp: '', nama: '', password: '', role: 'ppj', wilayahIds: [] });
+    setManagedPetugasSearch('');
+    setUserForm({ nipp: '', nama: '', password: '', role: 'ppj', wilayahIds: [], petugasIds: [] });
     setShowUserModal(true);
   };
   const handleOpenEditUser = (u: ManagedUser) => {
     setEditingUser(u);
+    setManagedPetugasSearch('');
     setUserForm({
       nipp: u.nipp, nama: u.nama, password: '', role: u.role,
       wilayahIds: u.wilayahAssignments.map(wa => wa.wilayah.id),
+      petugasIds: u.role === 'kupt'
+        ? managedUsers.filter(candidate => candidate.role === 'ppj' && candidate.managerId === u.id).map(candidate => candidate.id)
+        : [],
     });
     setShowUserModal(true);
   };
   const handleSaveUser = async () => {
     if (!userForm.nipp || !userForm.nama || !userForm.role) { showToast('Lengkapi semua field!', 'warning'); return; }
     if (!editingUser && !userForm.password) { showToast('Password wajib diisi untuk akun baru!', 'warning'); return; }
+    if (userForm.role === 'kupt' && userForm.wilayahIds.length < 2) { showToast('Akun KUPT wajib memilih minimal 2 wilayah!', 'warning'); return; }
     try {
       setSavingUser(true);
       if (editingUser) {
         await api.patch(`/admin/users/${editingUser.id}`, {
-          nama: userForm.nama, role: userForm.role, wilayahIds: userForm.wilayahIds,
+          nama: userForm.nama, role: userForm.role, wilayahIds: userForm.wilayahIds, petugasIds: userForm.petugasIds,
           ...(userForm.password ? { password: userForm.password } : {}),
         });
       } else {
@@ -1590,7 +1597,7 @@ export default function AdminPage() {
               {/* Role */}
               <div>
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Role</label>
-                <select value={userForm.role} onChange={e => setUserForm(f => ({ ...f, role: e.target.value, wilayahIds: [] }))} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium">
+                <select value={userForm.role} onChange={e => setUserForm(f => ({ ...f, role: e.target.value, wilayahIds: [], petugasIds: [] }))} className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none shadow-sm font-medium">
                   <option value="ppj">PPJ (Petugas Pemeriksa Jalur)</option>
                   <option value="qc">QC (Quality Control)</option>
                   <option value="kupt">KUPT</option>
@@ -1600,7 +1607,7 @@ export default function AdminPage() {
               {(userForm.role === 'qc' || userForm.role === 'kupt') && (
                 <div>
                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">
-                    Wilayah {userForm.role === 'kupt' ? '(Pilih 1)' : '(Pilih beberapa)'}
+                    Wilayah {userForm.role === 'kupt' ? '(Minimal 2)' : '(Pilih beberapa)'}
                   </label>
                   <div className="border border-slate-300 rounded-xl bg-white p-3 max-h-48 overflow-y-auto space-y-2">
                     {allWilayah.map(w => {
@@ -1611,12 +1618,7 @@ export default function AdminPage() {
                             type="checkbox"
                             checked={checked}
                             onChange={() => {
-                              setUserForm(f => {
-                                if (f.role === 'kupt') {
-                                  return { ...f, wilayahIds: checked ? [] : [w.id] };
-                                }
-                                return { ...f, wilayahIds: checked ? f.wilayahIds.filter(id => id !== w.id) : [...f.wilayahIds, w.id] };
-                              });
+                              setUserForm(f => ({ ...f, wilayahIds: checked ? f.wilayahIds.filter(id => id !== w.id) : [...f.wilayahIds, w.id] }));
                             }}
                             className="rounded border-slate-300 text-primary focus:ring-primary"
                           />
@@ -1629,8 +1631,71 @@ export default function AdminPage() {
                     })}
                   </div>
                   {userForm.wilayahIds.length > 0 && (
-                    <p className="text-xs text-primary font-semibold mt-2">{userForm.wilayahIds.length} wilayah dipilih</p>
+                    <p className={`text-xs font-semibold mt-2 ${userForm.role === 'kupt' && userForm.wilayahIds.length < 2 ? 'text-amber-600' : 'text-primary'}`}>
+                      {userForm.wilayahIds.length} wilayah dipilih{userForm.role === 'kupt' && userForm.wilayahIds.length < 2 ? ' — pilih 1 lagi' : ''}
+                    </p>
                   )}
+                </div>
+              )}
+              {/* Petugas managed by KUPT */}
+              {userForm.role === 'kupt' && (
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1.5">Petugas yang Dikelola</label>
+                  <div className="relative mb-2">
+                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[17px]">search</span>
+                    <input
+                      value={managedPetugasSearch}
+                      onChange={e => setManagedPetugasSearch(e.target.value)}
+                      placeholder="Cari nama atau NIPP petugas..."
+                      className="w-full border border-slate-300 rounded-xl pl-9 pr-4 py-2.5 text-sm text-slate-800 bg-white focus:ring-2 focus:ring-primary focus:border-primary outline-none"
+                    />
+                  </div>
+                  <div className="border border-slate-300 rounded-xl bg-white p-3 max-h-56 overflow-y-auto space-y-2">
+                    {managedUsers
+                      .filter(candidate => candidate.role === 'ppj')
+                      .filter(candidate => {
+                        const query = managedPetugasSearch.trim().toLowerCase();
+                        return !query || candidate.nama.toLowerCase().includes(query) || candidate.nipp.toLowerCase().includes(query);
+                      })
+                      .map(candidate => {
+                        const checked = userForm.petugasIds.includes(candidate.id);
+                        const currentManager = candidate.managerId
+                          ? managedUsers.find(manager => manager.id === candidate.managerId)
+                          : null;
+                        const managerLabel = candidate.managerId === editingUser?.id
+                          ? 'Dikelola KUPT ini'
+                          : currentManager
+                            ? `Saat ini: ${currentManager.nama}`
+                            : candidate.managerId
+                              ? 'Saat ini: Super Admin'
+                              : 'Belum ada pengelola';
+                        return (
+                          <label key={candidate.id} className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${checked ? 'bg-primary/5 border border-primary/20' : 'hover:bg-slate-50 border border-transparent'}`}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => setUserForm(formValue => ({
+                                ...formValue,
+                                petugasIds: checked
+                                  ? formValue.petugasIds.filter(id => id !== candidate.id)
+                                  : [...formValue.petugasIds, candidate.id],
+                              }))}
+                              className="rounded border-slate-300 text-primary focus:ring-primary"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-slate-800 truncate">{candidate.nama}</p>
+                              <p className="text-[11px] text-slate-500">{candidate.nipp} · {managerLabel}</p>
+                            </div>
+                            {!candidate.isActive && <span className="text-[9px] font-bold uppercase text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded">Nonaktif</span>}
+                          </label>
+                        );
+                      })}
+                    {managedUsers.filter(candidate => candidate.role === 'ppj').length === 0 && (
+                      <p className="text-xs text-slate-500 text-center py-3">Belum ada akun petugas PPJ.</p>
+                    )}
+                  </div>
+                  <p className="text-xs text-primary font-semibold mt-2">{userForm.petugasIds.length} petugas dipilih</p>
+                  <p className="text-[11px] text-slate-500 mt-1">Petugas yang sebelumnya dikelola pihak lain akan dipindahkan ke KUPT ini.</p>
                 </div>
               )}
             </div>
